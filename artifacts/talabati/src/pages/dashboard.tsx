@@ -356,42 +356,54 @@ function MenuView({ onSelect }: { onSelect: (view: View) => void }) {
       </button>
 
       {/* ── Favourite drivers section ─────────────────────────────────────── */}
-      {!favLoading && favorites.length > 0 && (
+      {!favLoading && (
         <div className="bubble-card p-6" dir="rtl">
           <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 text-lg">
             <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
             السائقون المفضلون
           </h3>
-          <div className="space-y-3">
-            {favorites.map(fav => {
-              const meta = statusMeta[fav.currentStatus] ?? statusMeta["مغلق"];
-              return (
-                <div key={fav.driverId} className="flex items-center justify-between bg-slate-50 dark:bg-slate-800/60 rounded-2xl px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center shrink-0">
-                      <User className="w-4 h-4 text-rose-500" />
+          {favorites.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
+              <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
+                <User className="w-5 h-5 text-slate-300 dark:text-slate-600" />
+              </div>
+              <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">ما عندك سائقين مفضلين بعد</p>
+              <p className="text-slate-400 dark:text-slate-500 text-xs leading-relaxed max-w-[220px]">
+                بعد أول توصيلة ناجحة، تقدر تضيف سائقك المفضل من صفحة طلباتك
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {favorites.map(fav => {
+                const meta = statusMeta[fav.currentStatus] ?? statusMeta["مغلق"];
+                return (
+                  <div key={fav.driverId} className="flex items-center justify-between bg-slate-50 dark:bg-slate-800/60 rounded-2xl px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center shrink-0">
+                        <User className="w-4 h-4 text-rose-500" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-800 dark:text-white text-sm">{fav.driverName}</p>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.color}`}>
+                          {meta.label}
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-bold text-slate-800 dark:text-white text-sm">{fav.driverName}</p>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.color}`}>
-                        {meta.label}
-                      </span>
-                    </div>
+                    <button
+                      onClick={() => handleRemoveFavorite(fav.driverId)}
+                      disabled={removingId === fav.driverId}
+                      className="p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                      title="إزالة"
+                    >
+                      {removingId === fav.driverId
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Trash2 className="w-4 h-4" />}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleRemoveFavorite(fav.driverId)}
-                    disabled={removingId === fav.driverId}
-                    className="p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
-                    title="إزالة"
-                  >
-                    {removingId === fav.driverId
-                      ? <Loader2 className="w-4 h-4 animate-spin" />
-                      : <Trash2 className="w-4 h-4" />}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
