@@ -10,8 +10,9 @@ import {
   Droplet, ShoppingBag, ListOrdered, CheckCircle2,
   Truck, Clock, ArrowRight, Loader2, MapPin, Bell, X,
   User, Phone, XCircle, Star, Bookmark, BookmarkCheck, Trash2,
-  HeadphonesIcon,
+  HeadphonesIcon, Heart,
 } from "lucide-react";
+import { getSocket } from "@/lib/socket-client";
 import { useRealtimeOrderStatus } from "@/hooks/use-realtime-order-status";
 import { format } from "date-fns";
 import { playNotificationSound, stopNotificationSound, CONSUMER_ARRIVAL_SOUND_KEY } from "@/hooks/use-notification-sound";
@@ -20,6 +21,14 @@ import { supabase } from "@/lib/supabase";
 import { getSessionBootReady } from "@/hooks/use-auth";
 
 type View = "menu" | "new-order" | "my-orders";
+
+interface FavoriteDriver {
+  id: string;
+  driverId: string;
+  driverName: string;
+  currentStatus: string;
+  createdAt: string;
+}
 
 const VOLUMES = ["5ل", "10ل", "15ل", "20ل", "30ل", "40ل", "50ل", "100ل", "150ل", "200ل", "300ل", "500ل", "1000ل"];
 
@@ -49,6 +58,27 @@ export default function Dashboard() {
   const arrivedOrderIdRef = useRef<string | null>(null);
   const acceptedOrderIdRef = useRef<Set<string>>(new Set());
   const arrivalLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Favorite window expiry modal (Socket "favorite_window_expired") ─────────
+  const [favoriteWindowModal, setFavoriteWindowModal] = useState<{ orderId: string } | null>(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    const socket = getSocket();
+    const handler = (payload: { orderId: string }) => {
+      setFavoriteWindowModal({ orderId: payload.orderId });
+    };
+    socket.on("favorite_window_expired", handler);
+    return () => { socket.off("favorite_window_expired", handler); };
+  }, [userId]);
+
+  const handleRenewFavoriteWindow = async () => {
+    if (!favoriteWindowModal) return;
+    try {
+      await customFetch(`/api/orders/${favoriteWindowModal.orderId}/renew-favorite-window`, { method: "POST" });
+    } catch { /* silently fail — server already cleared window; renewal may 404 but that's fine */ }
+    setFavoriteWindowModal(null);
+  };
 
   const openSupport = useSupportChatStore((s) => s.open);
 
@@ -129,6 +159,35 @@ export default function Dashboard() {
               className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold py-3.5 rounded-2xl shadow-lg hover:opacity-90 transition-all active:scale-[0.98]">
               حسناً، شكراً
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Favourite window expiry prompt ────────────────────────────────── */}
+      {favoriteWindowModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 mx-4 max-w-sm w-full shadow-2xl border border-sky-200 dark:border-sky-800 text-center animate-in zoom-in-95 duration-300" dir="rtl">
+            <div className="w-16 h-16 bg-sky-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Heart className="w-8 h-8 text-sky-500" />
+            </div>
+            <h2 className="text-xl font-black text-slate-800 dark:text-white mb-2">انتهت مهلة سائقك المفضل</h2>
+            <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+              هل تريد تجديدها 90 ثانية أخرى؟
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleRenewFavoriteWindow}
+                className="flex-1 bg-gradient-to-r from-sky-500 to-primary text-white font-bold py-3 rounded-2xl hover:opacity-90 transition-all active:scale-[0.98]"
+              >
+                تجديد
+              </button>
+              <button
+                onClick={() => setFavoriteWindowModal(null)}
+                className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-[0.98]"
+              >
+                لا، أرسل للجميع
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -252,6 +311,33 @@ function RatingModal({ orderId, raterUserId, ratedUserId, raterType, ratedName, 
 
 function MenuView({ onSelect }: { onSelect: (view: View) => void }) {
   const { t } = useTranslation();
+
+  const [favorites, setFavorites] = useState<FavoriteDriver[]>([]);
+  const [favLoading, setFavLoading] = useState(true);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    customFetch<FavoriteDriver[]>("/api/favorite-drivers")
+      .then(setFavorites)
+      .catch(() => {})
+      .finally(() => setFavLoading(false));
+  }, []);
+
+  const handleRemoveFavorite = async (driverId: string) => {
+    setRemovingId(driverId);
+    try {
+      await customFetch(`/api/favorite-drivers/${driverId}`, { method: "DELETE" });
+      setFavorites(prev => prev.filter(f => f.driverId !== driverId));
+    } catch { /* silently fail */ }
+    finally { setRemovingId(null); }
+  };
+
+  const statusMeta: Record<string, { label: string; color: string }> = {
+    "حاضر":    { label: "حاضر",    color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" },
+    "استراحة": { label: "استراحة", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" },
+    "مغلق":    { label: "مغلق",    color: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" },
+  };
+
   return (
     <div className="flex flex-col gap-6 mt-8">
       <button onClick={() => onSelect("new-order")} className="bubble-card p-8 flex flex-col items-center justify-center gap-4 group" data-testid="button-nav-new-order">
@@ -268,6 +354,46 @@ function MenuView({ onSelect }: { onSelect: (view: View) => void }) {
         <h2 className="text-2xl font-bold text-slate-800 dark:text-white">{t("dashboard.myOrders")}</h2>
         <p className="text-slate-500 text-center max-w-[200px]">{t("dashboard.myOrdersDesc")}</p>
       </button>
+
+      {/* ── Favourite drivers section ─────────────────────────────────────── */}
+      {!favLoading && favorites.length > 0 && (
+        <div className="bubble-card p-6" dir="rtl">
+          <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 text-lg">
+            <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
+            السائقون المفضلون
+          </h3>
+          <div className="space-y-3">
+            {favorites.map(fav => {
+              const meta = statusMeta[fav.currentStatus] ?? statusMeta["مغلق"];
+              return (
+                <div key={fav.driverId} className="flex items-center justify-between bg-slate-50 dark:bg-slate-800/60 rounded-2xl px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center shrink-0">
+                      <User className="w-4 h-4 text-rose-500" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800 dark:text-white text-sm">{fav.driverName}</p>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.color}`}>
+                        {meta.label}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleRemoveFavorite(fav.driverId)}
+                    disabled={removingId === fav.driverId}
+                    className="p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                    title="إزالة"
+                  >
+                    {removingId === fav.driverId
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <Trash2 className="w-4 h-4" />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -283,6 +409,30 @@ function NewOrderView({ onBack, onSuccess, userId, queryClient }: {
   const [gpsState, setGpsState] = useState<"idle" | "loading" | "acquired">("idle");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const createOrderMutation = useCreateOrder();
+
+  // ── Favourite driver window: show countdown banner after sentToFavorite ──────
+  const [favoriteMode, setFavoriteMode] = useState<{ orderId: string; countdown: number } | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
+  }, []);
+
+  const startFavoriteCountdown = (orderId: string) => {
+    setFavoriteMode({ orderId, countdown: 90 });
+    countdownRef.current = setInterval(() => {
+      setFavoriteMode(prev => {
+        if (!prev) return null;
+        if (prev.countdown <= 1) {
+          clearInterval(countdownRef.current!);
+          countdownRef.current = null;
+          onSuccess();
+          return null;
+        }
+        return { ...prev, countdown: prev.countdown - 1 };
+      });
+    }, 1000);
+  };
 
   const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([]);
   const [showSaveForm, setShowSaveForm] = useState(false);
@@ -362,15 +512,20 @@ function NewOrderView({ onBack, onSuccess, userId, queryClient }: {
     createOrderMutation.mutate(
       { data: { userId, waterVolume: selectedVolumes.join(", "), barrelCount: 1, totalPrice, latitude: coords.lat, longitude: coords.lng } },
       {
-        onSuccess: () => {
+        onSuccess: (data: unknown) => {
           queryClient.invalidateQueries({ queryKey: getGetUserOrdersQueryKey(userId) });
-          // Refresh today's remaining count after a successful order
           customFetch<TodayCount>("/api/orders/today-count").then(setTodayCount).catch(() => {});
-          onSuccess();
+          // Phase 7: if the order was sent exclusively to a favourite driver,
+          // show the 90-second countdown banner instead of navigating away.
+          const resp = data as { id?: string; sentToFavorite?: boolean } | undefined;
+          if (resp?.sentToFavorite && resp?.id) {
+            startFavoriteCountdown(resp.id);
+          } else {
+            onSuccess();
+          }
         },
         onError: (err: unknown) => {
           const e = err as { data?: { error?: string; code?: string } };
-          // Refresh count on 429 (limit exceeded) so badge stays accurate
           if (e?.data?.code === "DAILY_ORDER_LIMIT_EXCEEDED") {
             customFetch<TodayCount>("/api/orders/today-count").then(setTodayCount).catch(() => {});
           }
@@ -379,6 +534,39 @@ function NewOrderView({ onBack, onSuccess, userId, queryClient }: {
       }
     );
   };
+
+  // ── Favourite countdown banner — replaces form after sentToFavorite ─────────
+  if (favoriteMode) {
+    const mins = Math.floor(favoriteMode.countdown / 60);
+    const secs = String(favoriteMode.countdown % 60).padStart(2, "0");
+    return (
+      <div className="flex flex-col items-center justify-center gap-6 mt-12 animate-in zoom-in-95 duration-300" dir="rtl">
+        <div className="w-24 h-24 bg-sky-100 dark:bg-sky-900/30 rounded-full flex items-center justify-center shadow-lg shadow-sky-200">
+          <Heart className="w-12 h-12 text-sky-500 fill-sky-500" />
+        </div>
+        <h2 className="text-2xl font-black text-slate-800 dark:text-white text-center">
+          تم إرسال طلبك إلى سائقك المفضل
+        </h2>
+        <p className="text-slate-500 text-sm text-center leading-relaxed max-w-xs">
+          إذا لم يختر طلبك خلال 1:30 دقيقة، سيظهر طلبك لبقية السائقين تلقائيًا.
+        </p>
+        {/* Countdown ring */}
+        <div className="flex flex-col items-center gap-1 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 rounded-3xl px-10 py-5">
+          <span className="text-4xl font-black text-sky-600 dark:text-sky-300 tabular-nums tracking-tight">
+            {mins}:{secs}
+          </span>
+          <span className="text-xs text-sky-400 font-medium">الوقت المتبقي</span>
+        </div>
+        <button
+          onClick={() => { if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; } onSuccess(); }}
+          className="w-full max-w-xs py-3.5 rounded-2xl bg-gradient-to-r from-primary to-cyan-500 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30 hover:opacity-90 transition-all active:scale-[0.98]"
+        >
+          <ListOrdered className="w-5 h-5" />
+          عرض طلباتي الآن
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col animate-in slide-in-from-bottom-4 duration-300">
@@ -766,6 +954,41 @@ function MyOrdersView({ onBack, userId, onDriverArrived, onDriverAccepted, query
     catch { return new Set<string>(); }
   });
 
+  // ── Favourite driver state ─────────────────────────────────────────────────
+  const [favDriverIds, setFavDriverIds] = useState<Set<string>>(new Set());
+  const [favCount, setFavCount] = useState(0);
+  const [addingFavFor, setAddingFavFor] = useState<string | null>(null); // orderId being processed
+  const [favSuccess, setFavSuccess] = useState<Set<string>>(new Set());  // orderIds just added
+  const [favError, setFavError] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    customFetch<FavoriteDriver[]>("/api/favorite-drivers")
+      .then((data: FavoriteDriver[]) => {
+        setFavDriverIds(new Set(data.map((f: FavoriteDriver) => f.driverId)));
+        setFavCount(data.length);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleAddFavorite = async (orderId: string, driverId: string) => {
+    setAddingFavFor(orderId);
+    try {
+      await customFetch("/api/favorite-drivers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ driverId }),
+      });
+      setFavDriverIds(prev => new Set([...prev, driverId]));
+      setFavCount(prev => prev + 1);
+      setFavSuccess(prev => new Set([...prev, orderId]));
+    } catch (err: unknown) {
+      const e = err as { data?: { error?: string } };
+      setFavError(prev => ({ ...prev, [orderId]: e?.data?.error || "تعذّر الإضافة" }));
+    } finally {
+      setAddingFavFor(null);
+    }
+  };
+
   const checkEvents = useCallback(() => {
     if (!orders) return;
     for (const order of orders) {
@@ -884,6 +1107,37 @@ function MyOrdersView({ onBack, userId, onDriverArrived, onDriverAccepted, query
                       <Star className="w-3 h-3 fill-slate-300 text-slate-300" />تم التقييم
                     </div>
                   )}
+                  {/* ── Add favourite driver (Phase 7) ──────────────────── */}
+                  {order.status === "تم التوصيل" && order.driverId && (() => {
+                    const dId = order.driverId!;
+                    const alreadyAdded = favDriverIds.has(dId) || favSuccess.has(order.id);
+                    const atLimit = favCount >= 3 && !favDriverIds.has(dId);
+                    if (alreadyAdded) return (
+                      <div className="flex items-center gap-1 text-xs text-rose-400 px-3 py-1.5">
+                        <Heart className="w-3 h-3 fill-rose-400 text-rose-400" />مفضل ✔
+                      </div>
+                    );
+                    if (atLimit) return (
+                      <div className="text-xs text-slate-400 px-3 py-1.5">
+                        وصلت للحد الأقصى (3 مفضلين)
+                      </div>
+                    );
+                    if (favError[order.id]) return (
+                      <div className="text-xs text-red-500 px-3 py-1.5">{favError[order.id]}</div>
+                    );
+                    return (
+                      <button
+                        onClick={() => handleAddFavorite(order.id, dId)}
+                        disabled={addingFavFor === order.id}
+                        className="flex items-center gap-1 text-xs text-rose-600 bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/20 px-3 py-1.5 rounded-full transition-colors font-medium disabled:opacity-50"
+                      >
+                        {addingFavFor === order.id
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : <Heart className="w-3 h-3" />}
+                        إضافة كسائق مفضل
+                      </button>
+                    );
+                  })()}
                   {order.status === "ملغى" && (
                     <div className="flex items-center gap-1.5 text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-full text-sm font-medium">
                       <XCircle className="w-4 h-4" /><span>ملغى</span>
