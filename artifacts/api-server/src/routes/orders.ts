@@ -321,6 +321,17 @@ router.get("/orders/active", async (req, res): Promise<void> => {
   }
 
   const consumerUsers = usersTable;
+
+  // Priority ordering: orders from consumers who have added this driver as a
+  // favourite come first (isFavoriteConsumer = 0), then the rest (= 1).
+  // Within each group the existing newest-first order is preserved.
+  // No order is hidden — every pending order in the driver's commune is returned.
+  const isFavoriteConsumer = sql<number>`CASE WHEN EXISTS (
+    SELECT 1 FROM ${favoriteDriversTable}
+    WHERE ${favoriteDriversTable.driverId} = ${driverId}
+      AND ${favoriteDriversTable.userId}   = ${ordersTable.userId}
+  ) THEN 0 ELSE 1 END`;
+
   const orders = await db
     .select({
       id: ordersTable.id,
@@ -345,7 +356,7 @@ router.get("/orders/active", async (req, res): Promise<void> => {
         eq(consumerUsers.commune, driverDetails.commune)
       )
     )
-    .orderBy(desc(ordersTable.createdAt));
+    .orderBy(isFavoriteConsumer, desc(ordersTable.createdAt));
 
   res.json(GetActiveOrdersResponse.parse(orders.map(mapOrder)));
 });
