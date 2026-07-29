@@ -12,6 +12,7 @@ import {
 import { broadcastNewOrder, broadcastOrderClaimed, broadcastOrderStatusChange } from "../lib/supabase-server";
 import { emitToDrivers, emitToDriversInRegion, emitToUser } from "../lib/socket-server";
 import { sendPushToUser } from "../lib/web-push";
+import { haversineKm } from "../lib/geo";
 
 const router: IRouter = Router();
 
@@ -20,6 +21,13 @@ const router: IRouter = Router();
 // Algeria is UTC+1 year-round (Africa/Algiers, no DST).
 // ─────────────────────────────────────────────────────────────────────────────
 const DAILY_ORDER_LIMIT  = Number(process.env.DAILY_ORDER_LIMIT) || 3; // override in staging only, e.g. for load testing — production must not set this env var
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Geographic boundary for favourite-driver feature (Phase 6).
+// Override via FAVORITE_LOCATION_RADIUS_KM env var; default is 15 km.
+// ─────────────────────────────────────────────────────────────────────────────
+const FAVORITE_LOCATION_RADIUS_KM =
+  Number(process.env.FAVORITE_LOCATION_RADIUS_KM) || 15;
 const ALGERIA_OFFSET_MS  = 60 * 60 * 1000; // UTC+1
 
 function algeriaDateBoundaries(): { start: Date; end: Date; resetsAt: string } {
@@ -103,6 +111,51 @@ router.post("/orders", async (req, res): Promise<void> => {
       }
     } catch (err) {
       req.log.warn({ err }, "Daily limit check failed — allowing order anyway");
+    }
+  }
+
+  // ── Phase 6: Geographic boundary check ──────────────────────────────────────
+  // If the consumer already has a home anchor (set on their very first order),
+  // reject the new order when its coordinates are further than
+  // FAVORITE_LOCATION_RADIUS_KM km away.  This keeps favourite-driver routing
+  // meaningful: a consumer placing an order from a completely different city
+  // would be matched to drivers they know from home, which makes no sense.
+  //
+  // Failure strategy: if the DB read itself fails we log a warning and let the
+  // order through — a DB hiccup must never silently block a real order.
+  if (latitude != null && longitude != null) {
+    try {
+      const [homeLocation] = await db
+        .select({
+          homeLatitude:  usersTable.homeLatitude,
+          homeLongitude: usersTable.homeLongitude,
+        })
+        .from(usersTable)
+        .where(eq(usersTable.id, userId));
+
+      if (homeLocation?.homeLatitude != null && homeLocation?.homeLongitude != null) {
+        const distKm = haversineKm(
+          homeLocation.homeLatitude,
+          homeLocation.homeLongitude,
+          Number(latitude),
+          Number(longitude),
+        );
+
+        if (distKm > FAVORITE_LOCATION_RADIUS_KM) {
+          req.log.warn(
+            { userId, distKm, radiusKm: FAVORITE_LOCATION_RADIUS_KM },
+            "Order rejected — outside home region",
+          );
+          res.status(403).json({
+            error:
+              "يبدو أنك خارج نطاق بلديتك المسجّلة. لإكمال الطلب من هذا الموقع، يرجى التواصل مع خدمة العملاء لتحديث بياناتك أو إنشاء حساب جديد لمنطقتك الحالية.",
+            code: "OUTSIDE_HOME_REGION",
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      req.log.warn({ err }, "Geo boundary check failed — allowing order anyway");
     }
   }
 
