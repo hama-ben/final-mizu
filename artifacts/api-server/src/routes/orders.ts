@@ -399,6 +399,9 @@ router.get("/orders/active", async (req, res): Promise<void> => {
       longitude: ordersTable.longitude,
       status: ordersTable.status,
       createdAt: ordersTable.createdAt,
+      // 0 = consumer has this driver as favourite, 1 = not. Used for both
+      // ORDER BY priority and exposing isFavoriteConsumer in the response.
+      isFavoriteConsumerRank: isFavoriteConsumer,
     })
     .from(ordersTable)
     .leftJoin(consumerUsers, eq(ordersTable.userId, consumerUsers.id))
@@ -411,7 +414,9 @@ router.get("/orders/active", async (req, res): Promise<void> => {
     )
     .orderBy(isFavoriteConsumer, desc(ordersTable.createdAt));
 
-  res.json(GetActiveOrdersResponse.parse(orders.map(mapOrder)));
+  res.json(GetActiveOrdersResponse.parse(
+    orders.map(o => ({ ...mapOrder(o), isFavoriteConsumer: o.isFavoriteConsumerRank === 0 }))
+  ));
 });
 
 router.get("/orders/summary", async (req, res): Promise<void> => {

@@ -26,7 +26,7 @@ import {
   Package, Truck, CheckCircle2, User, Phone, MapPin,
   Loader2, PlayCircle, PauseCircle, XCircle, Bell, Coffee, Timer,
   CreditCard, Clock, ShieldAlert, CalendarDays, AlertTriangle,
-  HeadphonesIcon,
+  HeadphonesIcon, Star,
 } from "lucide-react";
 import { format } from "date-fns";
 import type { DriverStatusInputCurrentStatus } from "@workspace/api-client-react";
@@ -1049,19 +1049,24 @@ function PendingOrdersQueue({ driverId }: { driverId: string }) {
           </div>
         ) : (
           orders.map(order => (
-            <div key={order.id} className="glass-panel p-5 rounded-3xl overflow-hidden relative" data-testid={`pending-order-${order.id}`}>
-              <div className="absolute top-0 right-0 w-1 h-full bg-sky-400" />
+            <div key={order.id} className={`glass-panel p-5 rounded-3xl overflow-hidden relative ${order.isFavoriteConsumer ? "ring-1 ring-rose-300 dark:ring-rose-700" : ""}`} data-testid={`pending-order-${order.id}`}>
+              <div className={`absolute top-0 right-0 w-1 h-full ${order.isFavoriteConsumer ? "bg-rose-400" : "bg-sky-400"}`} />
 
               <div className="flex justify-between items-start mb-4 border-b border-slate-100 dark:border-slate-800 pb-4">
                 <div>
                   <span className="font-bold text-lg text-primary">{order.waterVolume}</span>
                   <div className="text-sm text-slate-500">{order.barrelCount} براميل</div>
                 </div>
-                <div className="text-right">
+                <div className="text-right flex flex-col items-end gap-1">
                   <div className="text-xl font-black text-slate-800 dark:text-white">
                     {order.totalPrice} <span className="text-sm font-normal">دج</span>
                   </div>
                   <div className="text-xs text-slate-400">{format(new Date(order.createdAt), "HH:mm")}</div>
+                  {order.isFavoriteConsumer && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-900/20 px-2 py-0.5 rounded-full">
+                      <Star className="w-2.5 h-2.5 fill-rose-500" /> مفضل
+                    </span>
+                  )}
                 </div>
               </div>
 

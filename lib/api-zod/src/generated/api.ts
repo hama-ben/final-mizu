@@ -179,7 +179,8 @@ export const GetActiveOrdersResponseItem = zod.object({
   "latitude": zod.number().nullish(),
   "longitude": zod.number().nullish(),
   "status": zod.string(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "isFavoriteConsumer": zod.boolean().optional()
 })
 export const GetActiveOrdersResponse = zod.array(GetActiveOrdersResponseItem)
 

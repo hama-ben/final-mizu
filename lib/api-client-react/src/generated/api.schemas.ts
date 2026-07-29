@@ -100,6 +100,8 @@ export interface Order {
   longitude?: number | null;
   status: string;
   createdAt: string;
+  /** True when the consumer has this driver saved as a favourite. Only present on GET /orders/active responses. */
+  isFavoriteConsumer?: boolean;
 }
 
 export interface OrdersSummary {

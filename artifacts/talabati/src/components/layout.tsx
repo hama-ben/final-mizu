@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
-import { LogOut, Sun, Moon, UserCircle, Bell, HeadphonesIcon } from "lucide-react";
+import { LogOut, Sun, Moon, UserCircle, Bell, HeadphonesIcon, User, Loader2 } from "lucide-react";
+import { customFetch } from "@workspace/api-client-react";
 import { useTheme } from "@/lib/theme";
 import { useTranslation, LOCALES, LOCALE_FLAGS, type Locale } from "@/lib/i18n";
 import { useDriverOrderWatcher } from "@/hooks/use-driver-order-watcher";
@@ -103,6 +104,34 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isDriver = userType === "سائق" && !!userId;
   const announcementUserType = isDriver ? "driver" : "customer";
 
+  // ── Fan count (driver-only) ───────────────────────────────────────────────
+  const [fanCount, setFanCount] = useState(0);
+  const [fansModalOpen, setFansModalOpen] = useState(false);
+  const [fans, setFans] = useState<string[]>([]);
+  const [fansLoading, setFansLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isDriver || !userId) return;
+    const fetchFanCount = () => {
+      customFetch<{ fanCount: number }>("/api/favorite-drivers/fan-count")
+        .then(data => setFanCount(data.fanCount))
+        .catch(() => {});
+    };
+    fetchFanCount();
+    const interval = setInterval(fetchFanCount, 60_000);
+    return () => clearInterval(interval);
+  }, [isDriver, userId]);
+
+  const handleFansClick = async () => {
+    setFansModalOpen(true);
+    setFansLoading(true);
+    try {
+      const data = await customFetch<{ fans: string[] }>("/api/favorite-drivers/fans");
+      setFans(data.fans);
+    } catch { /* silently fail */ }
+    finally { setFansLoading(false); }
+  };
+
   useDriverOrderWatcher(isDriver);
   useSocketConnection(userId ?? null, isDriver);
 
@@ -181,6 +210,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   {t("nav.greeting")}، {name}
                 </span>
 
+                {/* Fan count button — drivers only */}
+                {isDriver && (
+                  <button
+                    onClick={handleFansClick}
+                    className="relative w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 flex flex-col items-center justify-center transition-colors gap-0"
+                    title="جماهيري"
+                    aria-label="جماهيري"
+                  >
+                    <span className="text-sm leading-none">🎉</span>
+                    <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 leading-none">
+                      {fanCount}
+                    </span>
+                  </button>
+                )}
+
                 {/* Support chat button */}
                 <button
                   onClick={handleSupportOpen}
@@ -252,6 +296,63 @@ export function Layout({ children }: { children: React.ReactNode }) {
           userName={name ?? ""}
           onClose={closeSupport}
         />
+      )}
+
+      {/* Fans modal — driver-only */}
+      {fansModalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-end justify-center"
+          onClick={() => setFansModalOpen(false)}
+        >
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative bg-white dark:bg-slate-900 rounded-t-3xl p-6 w-full max-w-md max-h-[70dvh] overflow-y-auto animate-in slide-in-from-bottom-4 duration-300 shadow-2xl"
+            dir="rtl"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Handle bar */}
+            <div className="w-10 h-1 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-4" />
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-slate-800 dark:text-white text-lg">جماهيري 🎉</h3>
+              <button
+                onClick={() => setFansModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+              هؤلاء المستهلكون اختاروك كسائقهم المفضل 🎉
+            </p>
+
+            {fansLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+              </div>
+            ) : fans.length === 0 ? (
+              <div className="flex flex-col items-center py-10 text-center gap-3">
+                <span className="text-4xl">🌟</span>
+                <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed max-w-[220px]">
+                  ما عندك جماهير بعد — واصل في عملك وسيأتون!
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {fans.map((fanName, i) => (
+                  <li
+                    key={i}
+                    className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl px-4 py-3"
+                  >
+                    <div className="w-8 h-8 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center shrink-0">
+                      <User className="w-4 h-4 text-rose-500" />
+                    </div>
+                    <span className="font-medium text-slate-800 dark:text-white text-sm">{fanName}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
