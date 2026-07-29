@@ -38,6 +38,21 @@ router.post("/favorite-drivers", async (req, res): Promise<void> => {
     return;
   }
 
+  // Guard: driverId must belong to an approved driver account — not a consumer
+  const [driverUser] = await db
+    .select({ userType: usersTable.userType, accountStatus: usersTable.accountStatus })
+    .from(usersTable)
+    .where(eq(usersTable.id, driverId));
+
+  if (!driverUser) {
+    res.status(404).json({ error: "السائق غير موجود" });
+    return;
+  }
+  if (driverUser.userType !== "سائق") {
+    res.status(400).json({ error: "المعرف المُدخل لا ينتمي لحساب سائق" });
+    return;
+  }
+
   // Guard: max 3 favourites per consumer
   const [{ value: existingCount }] = await db
     .select({ value: count() })
