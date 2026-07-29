@@ -4,7 +4,11 @@ import { useAuth } from "@/hooks/use-auth";
 import { LogOut, Sun, Moon, UserCircle, Bell, HeadphonesIcon, User, Loader2 } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
 import { useTheme } from "@/lib/theme";
-import { useTranslation, LOCALES, LOCALE_FLAGS, type Locale } from "@/lib/i18n";
+import { useTranslation, LOCALES, LOCALE_FLAG_CODES, type Locale } from "@/lib/i18n";
+import { DZ, FR, GB } from "country-flag-icons/react/3x2";
+import type { ComponentType, SVGProps } from "react";
+
+const FLAG_SVG: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = { DZ, FR, GB };
 import { useDriverOrderWatcher } from "@/hooks/use-driver-order-watcher";
 import { useOrderNotificationStore } from "@/stores/order-notifications";
 import { useSocketConnection } from "@/hooks/use-socket-connection";
@@ -59,14 +63,19 @@ function LanguageCycleButton() {
     setLocale(next);
   };
 
+  const code = LOCALE_FLAG_CODES[locale];
+  const FlagComponent = FLAG_SVG[code];
+
   return (
     <button
       onClick={cycleLocale}
       title={`Language: ${locale.toUpperCase()}`}
-      className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 flex items-center justify-center transition-colors text-base leading-none select-none"
+      className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 flex items-center justify-center transition-colors overflow-hidden select-none"
       aria-label="Switch language"
     >
-      {LOCALE_FLAGS[locale]}
+      {FlagComponent && (
+        <FlagComponent className="w-6 h-auto" aria-hidden="true" />
+      )}
     </button>
   );
 }

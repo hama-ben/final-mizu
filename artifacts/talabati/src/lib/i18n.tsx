@@ -8,6 +8,13 @@ const FLAGS: Record<Locale, string> = {
   en: "🇬🇧",
 };
 
+/** ISO 3166-1 alpha-2 country codes — use with country-flag-icons SVG components. */
+const FLAG_CODES: Record<Locale, string> = {
+  ar: "DZ", // الجزائر
+  fr: "FR", // فرنسا
+  en: "GB", // بريطانيا
+};
+
 const LABELS: Record<Locale, string> = {
   ar: "العربية",
   fr: "Français",
@@ -15,7 +22,7 @@ const LABELS: Record<Locale, string> = {
 };
 
 export const LOCALES: Locale[] = ["ar", "fr", "en"];
-export { FLAGS as LOCALE_FLAGS, LABELS as LOCALE_LABELS };
+export { FLAGS as LOCALE_FLAGS, FLAG_CODES as LOCALE_FLAG_CODES, LABELS as LOCALE_LABELS };
 
 type Dict = Record<string, string>;
 
