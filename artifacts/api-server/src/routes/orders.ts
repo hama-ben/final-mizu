@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, count, sql, and, gte, lt } from "drizzle-orm";
+import { eq, desc, count, sql, and, gte, lt, isNotNull } from "drizzle-orm";
 import { db, ordersTable, usersTable, driverDetailsTable, driverStatusTable, favoriteDriversTable } from "@workspace/db";
 import {
   CreateOrderBody,
@@ -567,6 +567,75 @@ router.patch("/orders/:orderId/status", async (req, res): Promise<void> => {
   broadcastOrderStatusChange({ orderId: order.id, status: order.status, driverId: order.driverId }).catch(() => {});
 });
 
+// ── Renew favourite-driver exclusive window (+90 s) ───────────────────────────
+// Called by the consumer when "favorite_window_expired" arrives and they choose
+// to give the same favourite driver another 90-second exclusive window.
+router.post("/orders/:orderId/renew-favorite-window", async (req, res): Promise<void> => {
+  const orderId = Array.isArray(req.params.orderId) ? req.params.orderId[0] : req.params.orderId;
+  const userId  = req.auth!.userId;
+
+  // Fetch current order state
+  const [existing] = await db
+    .select({
+      status:            ordersTable.status,
+      userId:            ordersTable.userId,
+      exclusiveDriverId: ordersTable.exclusiveDriverId,
+    })
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId));
+
+  if (!existing) {
+    res.status(404).json({ error: "الطلب غير موجود" });
+    return;
+  }
+  if (existing.userId !== userId) {
+    res.status(403).json({ error: "غير مصرح لك بتعديل هذا الطلب" });
+    return;
+  }
+  if (existing.status !== "معلق") {
+    res.status(409).json({ error: "لا يمكن تجديد النافذة — الطلب لم يعد معلقاً" });
+    return;
+  }
+  if (!existing.exclusiveDriverId) {
+    res.status(409).json({ error: "لا توجد نافذة حصرية نشطة لهذا الطلب" });
+    return;
+  }
+
+  // Re-check the favourite driver is still online
+  const [statusRow] = await db
+    .select({ currentStatus: driverStatusTable.currentStatus })
+    .from(driverStatusTable)
+    .where(eq(driverStatusTable.driverId, existing.exclusiveDriverId));
+
+  if (statusRow?.currentStatus !== "حاضر") {
+    res.status(409).json({ error: "السائق المفضل لم يعد متاحاً حالياً" });
+    return;
+  }
+
+  const newExpiresAt = new Date(Date.now() + 90_000);
+  await db
+    .update(ordersTable)
+    .set({ exclusiveExpiresAt: newExpiresAt })
+    .where(eq(ordersTable.id, orderId));
+
+  // Re-send the order exclusively to the same favourite driver
+  const [user] = await db
+    .select({ commune: usersTable.commune, wilaya: usersTable.wilaya })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+
+  emitToUser(existing.exclusiveDriverId, "new_order", {
+    orderId,
+    commune:     user?.commune ?? "",
+    wilaya:      user?.wilaya  ?? "",
+    waterVolume: "", // will be fetched by the driver's client on receipt
+    barrelCount: 0,
+  });
+
+  req.log.info({ orderId, exclusiveDriverId: existing.exclusiveDriverId }, "Favourite window renewed");
+  res.json({ success: true, exclusiveExpiresAt: newExpiresAt.toISOString() });
+});
+
 // Atomic accept — prevents two drivers picking the same order
 router.post("/orders/:orderId/accept", async (req, res): Promise<void> => {
   const orderId = Array.isArray(req.params.orderId) ? req.params.orderId[0] : req.params.orderId;
@@ -579,6 +648,34 @@ router.post("/orders/:orderId/accept", async (req, res): Promise<void> => {
     return;
   }
   const driverId = req.auth.userId;
+
+  // ── Exclusivity guard ────────────────────────────────────────────────────
+  // If the order still has an active exclusive window for a different driver,
+  // block the accept with 403.  The window may have just expired between the
+  // client's last refresh and this request, so we do a fresh DB read.
+  const [preCheck] = await db
+    .select({
+      status:            ordersTable.status,
+      exclusiveDriverId: ordersTable.exclusiveDriverId,
+      exclusiveExpiresAt: ordersTable.exclusiveExpiresAt,
+    })
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId));
+
+  if (!preCheck) {
+    res.status(404).json({ error: "الطلب غير موجود" });
+    return;
+  }
+
+  const windowActive =
+    preCheck.exclusiveDriverId !== null &&
+    preCheck.exclusiveExpiresAt !== null &&
+    preCheck.exclusiveExpiresAt > new Date();
+
+  if (windowActive && preCheck.exclusiveDriverId !== driverId) {
+    res.status(403).json({ error: "هذا الطلب محجوز حاليًا لسائق آخر لفترة محدودة" });
+    return;
+  }
 
   const [order] = await db
     .update(ordersTable)

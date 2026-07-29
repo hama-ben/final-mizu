@@ -14,6 +14,7 @@ import { runMigrations } from "./lib/migrate";
 import { ensureDriverBucket } from "./lib/storage-init";
 import { initRealtimeBroadcast } from "./lib/supabase-server";
 import { initSocketServer } from "./lib/socket-server";
+import { startFavoriteSweep } from "./lib/favorite-sweep";
 
 const rawPort = process.env["PORT"];
 
@@ -65,5 +66,8 @@ runMigrations()
 
       // Supabase Realtime — secondary broadcast layer (cross-network fallback).
       initRealtimeBroadcast();
+
+      // Favourite-driver exclusivity sweep — clears expired windows every 15 s.
+      startFavoriteSweep();
     });
   });
