@@ -30,6 +30,7 @@ import locationsRouter                                       from "./locations";
 import { supportPublicRouter, supportProtectedRouter }       from "./support";
 import accountRouter                                         from "./account";
 import appealsRouter                                         from "./appeals";
+import favoriteDriversRouter                                 from "./favorite-drivers";
 
 const router: IRouter = Router();
 
@@ -58,6 +59,7 @@ router.use(ordersRouter);
 router.use(ratingsRouter);
 router.use(announcementsRouter);
 router.use(locationsRouter);
+router.use(favoriteDriversRouter);  // GET|POST /favorite-drivers  DELETE /favorite-drivers/:driverId  GET /favorite-drivers/fan-count  GET /favorite-drivers/fans
 router.use(supportProtectedRouter); // GET /support/thread  POST /support/thread/send
 
 export default router;
