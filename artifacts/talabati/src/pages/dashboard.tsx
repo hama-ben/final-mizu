@@ -418,8 +418,9 @@ function NewOrderView({ onBack, onSuccess, userId, queryClient }: {
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
   }, []);
 
-  const startFavoriteCountdown = (orderId: string) => {
-    setFavoriteMode({ orderId, countdown: 90 });
+  const startFavoriteCountdown = (orderId: string, expiresAt: string) => {
+    const initialSeconds = Math.max(1, Math.round((new Date(expiresAt).getTime() - Date.now()) / 1000));
+    setFavoriteMode({ orderId, countdown: initialSeconds });
     countdownRef.current = setInterval(() => {
       setFavoriteMode(prev => {
         if (!prev) return null;
@@ -517,9 +518,9 @@ function NewOrderView({ onBack, onSuccess, userId, queryClient }: {
           customFetch<TodayCount>("/api/orders/today-count").then(setTodayCount).catch(() => {});
           // Phase 7: if the order was sent exclusively to a favourite driver,
           // show the 90-second countdown banner instead of navigating away.
-          const resp = data as { id?: string; sentToFavorite?: boolean } | undefined;
-          if (resp?.sentToFavorite && resp?.id) {
-            startFavoriteCountdown(resp.id);
+          const resp = data as { id?: string; sentToFavorite?: boolean; exclusiveExpiresAt?: string } | undefined;
+          if (resp?.sentToFavorite && resp?.id && resp?.exclusiveExpiresAt) {
+            startFavoriteCountdown(resp.id, resp.exclusiveExpiresAt);
           } else {
             onSuccess();
           }
