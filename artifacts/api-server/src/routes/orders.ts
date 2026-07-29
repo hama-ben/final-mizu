@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, count, sql, and, gte, lt } from "drizzle-orm";
-import { db, ordersTable, usersTable, driverDetailsTable, driverStatusTable } from "@workspace/db";
+import { db, ordersTable, usersTable, driverDetailsTable, driverStatusTable, favoriteDriversTable } from "@workspace/db";
 import {
   CreateOrderBody,
   GetUserOrdersParams,
@@ -126,67 +126,125 @@ router.post("/orders", async (req, res): Promise<void> => {
         phone: usersTable.phone,
         commune: usersTable.commune,
         wilaya: usersTable.wilaya,
+        homeLatitude: usersTable.homeLatitude,
+        homeLongitude: usersTable.homeLongitude,
       })
       .from(usersTable)
       .where(eq(usersTable.id, userId));
 
     req.log.info({ orderId: order.id }, "Order created");
 
-    res.status(201).json(mapOrder({
-      ...order,
-      userName: user?.name ?? null,
-      userPhone: user?.phone ?? null,
-    }));
+    // ── Save home location anchor on the consumer's very first order ─────────
+    // homeLatitude/homeLongitude are null until the first real order is placed.
+    // We use the order coordinates to anchor the consumer to their municipality.
+    if (user && user.homeLatitude === null && latitude != null && longitude != null) {
+      db.update(usersTable)
+        .set({ homeLatitude: Number(latitude), homeLongitude: Number(longitude) })
+        .where(eq(usersTable.id, userId))
+        .catch((err) => req.log.warn({ err }, "Failed to save home location"));
+    }
+
+    // ── Favorite-driver exclusivity ───────────────────────────────────────────
+    // If the consumer has favourite drivers, check which (if any) is online.
+    // Pick the oldest-added one (created_at ASC) and give them a 90-second
+    // exclusive window.  If none are available fall through to the normal
+    // region-wide broadcast.
+    let sentToFavorite = false;
+    let exclusiveExpiresAt: Date | null = null;
+    let resolvedExclusiveDriverId: string | null = null;
+
+    if (req.auth?.userType === "مستهلك") {
+      try {
+        const favorites = await db
+          .select({ driverId: favoriteDriversTable.driverId })
+          .from(favoriteDriversTable)
+          .where(eq(favoriteDriversTable.userId, userId))
+          .orderBy(favoriteDriversTable.createdAt); // oldest-added favourite first
+
+        for (const { driverId: favDriverId } of favorites) {
+          const [statusRow] = await db
+            .select({ currentStatus: driverStatusTable.currentStatus })
+            .from(driverStatusTable)
+            .where(eq(driverStatusTable.driverId, favDriverId));
+
+          if (statusRow?.currentStatus === "حاضر") {
+            resolvedExclusiveDriverId = favDriverId;
+            exclusiveExpiresAt        = new Date(Date.now() + 90_000);
+            await db
+              .update(ordersTable)
+              .set({ exclusiveDriverId: resolvedExclusiveDriverId, exclusiveExpiresAt })
+              .where(eq(ordersTable.id, order.id));
+            sentToFavorite = true;
+            break;
+          }
+        }
+      } catch (err) {
+        req.log.warn({ err }, "Favourite-driver check failed — broadcasting normally");
+      }
+    }
+
+    // ── Response ──────────────────────────────────────────────────────────────
+    const responseBody: Record<string, unknown> = {
+      ...mapOrder({
+        ...order,
+        userName: user?.name ?? null,
+        userPhone: user?.phone ?? null,
+      }),
+    };
+    if (sentToFavorite && exclusiveExpiresAt) {
+      responseBody.sentToFavorite    = true;
+      responseBody.exclusiveExpiresAt = exclusiveExpiresAt.toISOString();
+    }
+    res.status(201).json(responseBody);
 
     const orderPayload = {
       orderId: order.id,
       commune: user?.commune ?? "",
-      wilaya: user?.wilaya ?? "",
+      wilaya:  user?.wilaya  ?? "",
       waterVolume,
       barrelCount,
     };
 
-    // ── Socket.io: emit only to drivers in this order's own wilaya/commune ──
-    // (primary real-time layer). Broadcasting nationwide here would turn one
-    // order into one client re-fetch per connected driver in the whole
-    // country — a real bottleneck against the DB pool at fleet scale.
-    if (user?.commune && user?.wilaya) {
-      emitToDriversInRegion(user.wilaya, user.commune, "new_order", orderPayload);
-    }
+    if (sentToFavorite && resolvedExclusiveDriverId) {
+      // ── Exclusive mode: send only to the favourite driver ─────────────────
+      emitToUser(resolvedExclusiveDriverId, "new_order", orderPayload);
+    } else {
+      // ── Normal mode: broadcast to all drivers in the region ───────────────
+      if (user?.commune && user?.wilaya) {
+        emitToDriversInRegion(user.wilaya, user.commune, "new_order", orderPayload);
+      }
 
-    // ── Supabase Realtime: secondary broadcast for drivers not on Socket.io ──
-    if (user?.commune && user?.wilaya) {
-      broadcastNewOrder(orderPayload).catch(() => {});
-    }
+      // ── Supabase Realtime: secondary broadcast for drivers not on Socket.io ──
+      if (user?.commune && user?.wilaya) {
+        broadcastNewOrder(orderPayload).catch(() => {});
+      }
 
-    // ── Web Push: alert drivers whose browser/tab is closed ──────────────────
-    // Look up all APPROVED, non-"مغلق" drivers in the same wilaya+commune and
-    // push to each one. Drivers who set themselves to "مغلق" must receive
-    // absolutely no notification, and unapproved accounts shouldn't either.
-    if (user?.commune && user?.wilaya) {
-      db.select({ id: driverDetailsTable.driverId })
-        .from(driverDetailsTable)
-        .innerJoin(usersTable, eq(usersTable.id, driverDetailsTable.driverId))
-        .leftJoin(driverStatusTable, eq(driverStatusTable.driverId, driverDetailsTable.driverId))
-        .where(
-          and(
-            eq(driverDetailsTable.wilaya,  user.wilaya),
-            eq(driverDetailsTable.commune, user.commune),
-            eq(usersTable.accountStatus, "approved"),
-            sql`COALESCE(${driverStatusTable.currentStatus}, 'مغلق') <> 'مغلق'`,
+      // ── Web Push: alert drivers whose browser/tab is closed ────────────────
+      if (user?.commune && user?.wilaya) {
+        db.select({ id: driverDetailsTable.driverId })
+          .from(driverDetailsTable)
+          .innerJoin(usersTable, eq(usersTable.id, driverDetailsTable.driverId))
+          .leftJoin(driverStatusTable, eq(driverStatusTable.driverId, driverDetailsTable.driverId))
+          .where(
+            and(
+              eq(driverDetailsTable.wilaya,  user.wilaya),
+              eq(driverDetailsTable.commune, user.commune),
+              eq(usersTable.accountStatus, "approved"),
+              sql`COALESCE(${driverStatusTable.currentStatus}, 'مغلق') <> 'مغلق'`,
+            )
           )
-        )
-        .then((drivers) => {
-          const pushPayload = {
-            title: "طلب جديد في منطقتك! 🔔",
-            body:  `${waterVolume} — اضغط لعرض الطلبات`,
-            url:   "/driver-dashboard",
-          };
-          for (const { id } of drivers) {
-            sendPushToUser(id, pushPayload).catch(() => {});
-          }
-        })
-        .catch(() => {});
+          .then((drivers) => {
+            const pushPayload = {
+              title: "طلب جديد في منطقتك! 🔔",
+              body:  `${waterVolume} — اضغط لعرض الطلبات`,
+              url:   "/driver-dashboard",
+            };
+            for (const { id } of drivers) {
+              sendPushToUser(id, pushPayload).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
     }
 
     // ─── Feature 7: 5-minute timeout — auto-re-open if no driver accepts ──────

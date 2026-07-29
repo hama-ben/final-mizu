@@ -35,7 +35,26 @@ initSocketServer(httpServer);
 
 // Run DB migrations before accepting any traffic.
 // Uses CREATE TABLE IF NOT EXISTS — safe to run on every cold start.
+// In development the direct Supabase Postgres connection may be unreachable
+// (e.g. DNS blocked by the host environment). We log a warning and start
+// anyway so local development still works; production always has a reachable DB.
+const isDev = process.env.NODE_ENV === "development";
+
 runMigrations()
+  .catch((err: unknown) => {
+    const code = (err as { code?: string })?.code;
+    const isNetworkError = code === "ENOTFOUND" || code === "ECONNREFUSED" || code === "ETIMEDOUT";
+    if (isDev && isNetworkError) {
+      logger.warn(
+        { err },
+        "DB migration skipped — cannot reach Supabase from this environment (dev only). " +
+        "Apply schema changes via Supabase Dashboard SQL Editor."
+      );
+      return; // continue startup in dev
+    }
+    logger.error({ err }, "DB migration failed — aborting startup");
+    process.exit(1);
+  })
   .then(() => {
     httpServer.listen(port, () => {
       logger.info({ port }, "Server listening");
@@ -47,8 +66,4 @@ runMigrations()
       // Supabase Realtime — secondary broadcast layer (cross-network fallback).
       initRealtimeBroadcast();
     });
-  })
-  .catch((err) => {
-    logger.error({ err }, "DB migration failed — aborting startup");
-    process.exit(1);
   });
