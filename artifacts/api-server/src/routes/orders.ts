@@ -649,46 +649,63 @@ router.post("/orders/:orderId/accept", async (req, res): Promise<void> => {
   }
   const driverId = req.auth.userId;
 
-  // ── Exclusivity guard ────────────────────────────────────────────────────
-  // If the order still has an active exclusive window for a different driver,
-  // block the accept with 403.  The window may have just expired between the
-  // client's last refresh and this request, so we do a fresh DB read.
-  const [preCheck] = await db
-    .select({
-      status:            ordersTable.status,
-      exclusiveDriverId: ordersTable.exclusiveDriverId,
-      exclusiveExpiresAt: ordersTable.exclusiveExpiresAt,
-    })
-    .from(ordersTable)
-    .where(eq(ordersTable.id, orderId));
-
-  if (!preCheck) {
-    res.status(404).json({ error: "الطلب غير موجود" });
-    return;
-  }
-
-  const windowActive =
-    preCheck.exclusiveDriverId !== null &&
-    preCheck.exclusiveExpiresAt !== null &&
-    preCheck.exclusiveExpiresAt > new Date();
-
-  if (windowActive && preCheck.exclusiveDriverId !== driverId) {
-    res.status(403).json({ error: "هذا الطلب محجوز حاليًا لسائق آخر لفترة محدودة" });
-    return;
-  }
-
+  // ── Single atomic UPDATE — exclusivity + accept in one statement ─────────
+  //
+  // Both guarantees are enforced inside the WHERE clause of a single UPDATE,
+  // so Postgres row-locks the row and evaluates both conditions together.
+  // This eliminates the TOCTOU race of a separate read-then-write:
+  //
+  //   (a) status = "معلق"           → only one driver can ever flip this
+  //   (b) exclusivity window guard  → allow only if:
+  //         • no exclusive driver is set, OR
+  //         • the exclusive window has already expired, OR
+  //         • this IS the exclusive driver
+  //
+  // If the UPDATE returns nothing we do a single diagnostic read to return
+  // the right error code (404 / 403 / 409) — this read is only for the
+  // error path and does not affect correctness.
   const [order] = await db
     .update(ordersTable)
     .set({ status: "قيد التوصيل", driverId })
     .where(
       and(
         eq(ordersTable.id, orderId),
-        eq(ordersTable.status, "معلق")
+        eq(ordersTable.status, "معلق"),
+        sql`(
+          ${ordersTable.exclusiveDriverId} IS NULL
+          OR ${ordersTable.exclusiveExpiresAt} < now()
+          OR ${ordersTable.exclusiveDriverId} = ${driverId}
+        )`
       )
     )
     .returning();
 
   if (!order) {
+    // Determine why the UPDATE matched nothing
+    const [diagnostic] = await db
+      .select({
+        status:             ordersTable.status,
+        exclusiveDriverId:  ordersTable.exclusiveDriverId,
+        exclusiveExpiresAt: ordersTable.exclusiveExpiresAt,
+      })
+      .from(ordersTable)
+      .where(eq(ordersTable.id, orderId));
+
+    if (!diagnostic) {
+      res.status(404).json({ error: "الطلب غير موجود" });
+      return;
+    }
+
+    const windowStillActive =
+      diagnostic.exclusiveDriverId !== null &&
+      diagnostic.exclusiveExpiresAt !== null &&
+      diagnostic.exclusiveExpiresAt > new Date();
+
+    if (windowStillActive && diagnostic.exclusiveDriverId !== driverId) {
+      res.status(403).json({ error: "هذا الطلب محجوز حاليًا لسائق آخر لفترة محدودة" });
+      return;
+    }
+
     res.status(409).json({ error: "الطلب تم قبوله من قِبل سائق آخر" });
     return;
   }
