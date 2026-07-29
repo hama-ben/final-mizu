@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, count, sql, and, gte, lt, isNotNull } from "drizzle-orm";
+import { eq, desc, count, sql, and, gte, lt, lte, or, isNull, isNotNull } from "drizzle-orm";
 import { db, ordersTable, usersTable, driverDetailsTable, driverStatusTable, favoriteDriversTable } from "@workspace/db";
 import {
   CreateOrderBody,
@@ -409,7 +409,17 @@ router.get("/orders/active", async (req, res): Promise<void> => {
       and(
         eq(ordersTable.status, "معلق"),
         eq(consumerUsers.wilaya, driverDetails.wilaya),
-        eq(consumerUsers.commune, driverDetails.commune)
+        eq(consumerUsers.commune, driverDetails.commune),
+        // Hide orders that are inside an active exclusive window destined for
+        // a DIFFERENT driver.  Keep the order visible if:
+        //   (a) no exclusive assignment exists at all, OR
+        //   (b) the exclusive window has already expired, OR
+        //   (c) this driver IS the exclusive recipient.
+        or(
+          isNull(ordersTable.exclusiveDriverId),
+          lte(ordersTable.exclusiveExpiresAt, sql`now()`),
+          eq(ordersTable.exclusiveDriverId, driverId)
+        )
       )
     )
     .orderBy(isFavoriteConsumer, desc(ordersTable.createdAt));
