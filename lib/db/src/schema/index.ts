@@ -1,4 +1,4 @@
-import { pgTable, text, integer, numeric, timestamp, boolean, jsonb, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, numeric, timestamp, boolean, jsonb, doublePrecision, unique } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const usersTable = pgTable("users", {
@@ -15,6 +15,10 @@ export const usersTable = pgTable("users", {
   freeTrialClaimed: boolean("free_trial_claimed").notNull().default(false),
   firstApprovalGranted: boolean("first_approval_granted").notNull().default(false),
   createdAt: timestamp("created_at"),
+  // Geographic anchor recorded automatically from the consumer's first real order.
+  // Used later to verify the consumer is still within their registered region.
+  homeLatitude: doublePrecision("home_latitude"),
+  homeLongitude: doublePrecision("home_longitude"),
 });
 
 export const driverStatusTable = pgTable("driver_status", {
@@ -46,6 +50,10 @@ export const ordersTable = pgTable("orders", {
   longitude: text("longitude"),
   status: text("status").notNull().default("معلق"),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  // Favorite-driver exclusivity: set when a consumer has a favourite driver who is online.
+  // The order is sent only to this driver until exclusiveExpiresAt passes.
+  exclusiveDriverId: text("exclusive_driver_id"),
+  exclusiveExpiresAt: timestamp("exclusive_expires_at"),
 });
 
 export const subscriptionPaymentsTable = pgTable("subscription_payments", {
@@ -148,6 +156,24 @@ export const pushSubscriptionsTable = pgTable("push_subscriptions", {
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
 });
+
+/**
+ * favorite_drivers — consumers can save up to 3 drivers they trust.
+ * Used to route new orders exclusively to a favourite driver for 90 s
+ * before falling back to the normal region-wide broadcast.
+ */
+export const favoriteDriversTable = pgTable(
+  "favorite_drivers",
+  {
+    id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: text("user_id").notNull(),   // consumer
+    driverId: text("driver_id").notNull(), // driver
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    unique("favorite_drivers_user_driver_unique").on(table.userId, table.driverId),
+  ]
+);
 
 /**
  * One row per driver — always their most recent GPS position.
