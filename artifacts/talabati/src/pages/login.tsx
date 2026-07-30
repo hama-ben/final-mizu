@@ -94,7 +94,7 @@ export default function Login() {
       setError(t("login.error.fields"));
       return;
     }
-    loginMutation.mutate({ data: { email, password } }, {
+    loginMutation.mutate({ data: { email: email.trim().toLowerCase(), password } }, {
       onSuccess: (data: any) => {
         setAuth({
           userId: data.userId,

@@ -105,7 +105,8 @@ router.post("/auth/register-request", async (req, res): Promise<void> => {
     return;
   }
 
-  const { name, email, password, phone, userType, wilaya, commune } = parsed.data;
+  const { name, email: emailRaw, password, phone, userType, wilaya, commune } = parsed.data;
+  const email = emailRaw.trim().toLowerCase();
 
   if (!wilaya || !commune) {
     res.status(400).json({ error: "الولاية والبلدية مطلوبتان" });
@@ -182,12 +183,13 @@ router.post("/auth/register-request", async (req, res): Promise<void> => {
 // Step 2: Verify OTP — confirm Supabase session → create user row in DB
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/auth/verify-otp", async (req, res): Promise<void> => {
-  const { email, otp } = req.body as { email?: string; otp?: string };
+  const { email: emailRaw, otp } = req.body as { email?: string; otp?: string };
 
-  if (!email || !otp) {
+  if (!emailRaw || !otp) {
     res.status(400).json({ error: "البريد الإلكتروني ورمز التحقق مطلوبان" });
     return;
   }
+  const email = emailRaw.trim().toLowerCase();
 
   const otpTrimmed = otp.trim();
   if (!/^\d{6}$/.test(otpTrimmed)) {
@@ -303,7 +305,8 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  const { email, password } = parsed.data;
+  const { email: emailRaw, password } = parsed.data;
+  const email = emailRaw.trim().toLowerCase();
 
   const supabase = getSupabaseAuth();
   if (!supabase) {

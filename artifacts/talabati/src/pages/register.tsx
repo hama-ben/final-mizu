@@ -107,12 +107,13 @@ function RegistrationForm({ onOtpSent }: { onOtpSent: (email: string) => void })
     if (!name || !email || !password || !phone) { setError(t("register.error.fields")); return; }
     if (!wilaya)    { setError(t("register.error.wilaya")); return; }
     if (!commune)   { setError(t("register.error.commune")); return; }
+    const normalizedEmail = email.trim().toLowerCase();
     requestMutation.mutate(
-      { data: { name, email, password, phone, userType, wilaya, commune } },
+      { data: { name, email: normalizedEmail, password, phone, userType, wilaya, commune } },
       {
         onSuccess: () => {
           localStorage.removeItem(REG_DRAFT_KEY);
-          onOtpSent(email);
+          onOtpSent(normalizedEmail);
         },
         onError: (err: unknown) => {
           console.error("[REGISTER REQUEST ERROR]", err);
