@@ -4,8 +4,9 @@
  * GET /account/:userId/status
  *   Protected by requireAuth (caller must be authenticated).
  *   A user may only fetch their own status (req.auth.userId === params.userId).
- *   Returns { accountStatus, userType } — the same shape used by the frontend
- *   AccountStatusGate to decide which blocking overlay to show.
+ *   Returns { accountStatus, userType, suspensionSource } — the same shape
+ *   used by the frontend AccountStatusGate to decide which blocking overlay
+ *   to show.
  *
  *   This endpoint is also allowlisted in blockFrozenAccounts so that frozen
  *   users can still poll their own status (which is exactly when they need it).
@@ -39,22 +40,25 @@ router.get("/account/:userId/status", async (req, res): Promise<void> => {
     return;
   }
 
-  // Driver suspensions are stored on driver_details for the driver-specific
-  // suspension workflow, while bans/suspensions from the admin account
-  // controls are stored on users. Expose one effective status so the global
-  // frontend gate can show the blocking overlay in either case.
+  // Driver-request suspensions are stored on driver_details, while
+  // admin-initiated suspensions are stored on users. Expose both the
+  // effective status and its source so the frontend can show the correct
+  // action: lift-request for the former, support-only for the latter.
   let accountStatus = user.accountStatus;
+  let suspensionSource: "admin" | "driver_request" | null =
+    user.accountStatus === "suspended" ? "admin" : null;
   if (user.userType === "سائق") {
     const [driverDetails] = await db
       .select({ isSuspended: driverDetailsTable.isSuspended })
       .from(driverDetailsTable)
       .where(eq(driverDetailsTable.driverId, callerId));
-    if (driverDetails?.isSuspended === true) {
+    if (driverDetails?.isSuspended === true && user.accountStatus !== "suspended") {
       accountStatus = "suspended";
+      suspensionSource = "driver_request";
     }
   }
 
-  res.json({ accountStatus, userType: user.userType });
+  res.json({ accountStatus, userType: user.userType, suspensionSource });
 });
 
 export default router;

@@ -25,8 +25,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetAccountStatus,
   getGetAccountStatusQueryKey,
-  useGetDriverAccount,
-  getGetDriverAccountQueryKey,
 } from "@workspace/api-client-react";
 import { getSocket } from "@/lib/socket-client";
 import { useSupportChatStore } from "@/stores/support-chat";
@@ -167,6 +165,39 @@ function BannedAccountOverlay() {
   );
 }
 
+// Admin-initiated suspension — no lift request is available from this overlay.
+function AdminSuspendedAccountOverlay() {
+  const openSupport = useSupportChatStore((s) => s.open);
+
+  return (
+    <div className="fixed inset-0 z-[210] flex items-center justify-center bg-slate-950/95 backdrop-blur-md">
+      <div
+        className="bg-slate-900 rounded-3xl p-8 mx-4 max-w-sm w-full shadow-2xl border border-red-500/40 text-center animate-in zoom-in-95 duration-300"
+        dir="rtl"
+      >
+        <div className="w-16 h-16 bg-red-500/15 rounded-full flex items-center justify-center mx-auto mb-4">
+          <XCircle className="w-8 h-8 text-red-400" />
+        </div>
+        <h2 className="text-xl font-black text-white mb-3">
+          تم إيقاف حسابك من طرف الإدارة
+        </h2>
+        <div className="bg-red-950/40 border border-red-500/30 rounded-2xl p-4 mb-6 text-right">
+          <p className="text-slate-200 text-sm leading-loose font-bold">
+            تم تعليق حسابك بسبب مخالفة أحد قوانين أو قواعد ميزو. يرجى التواصل مع خدمة العملاء لمعرفة التفاصيل.
+          </p>
+        </div>
+        <button
+          onClick={openSupport}
+          className="w-full min-h-12 flex items-center justify-center gap-2 bg-gradient-to-r from-red-500 to-orange-500 text-white font-bold px-3 py-3 rounded-2xl shadow-lg hover:opacity-90 transition-all active:scale-[0.98] text-sm"
+        >
+          <HeadphonesIcon className="w-5 h-5" />
+          خدمة العملاء
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AccountStatusGate — global freeze overlay (sibling of SessionEvictionGuard)
 //
@@ -197,15 +228,6 @@ function AccountStatusGate() {
       },
     },
   });
-  const { data: driverAccount } = useGetDriverAccount(userId ?? "", {
-    query: {
-      queryKey: getGetDriverAccountQueryKey(userId ?? ""),
-      enabled: !!userId && userType === "سائق",
-      refetchInterval: 10_000,
-      refetchIntervalInBackground: false,
-    },
-  });
-
   // Instant freeze via Socket.io event (emitted by admin suspend/ban endpoints)
   useEffect(() => {
     if (!userId) return;
@@ -236,11 +258,13 @@ function AccountStatusGate() {
     return () => window.removeEventListener("api-error", handler as EventListener);
   }, [userId, queryClient]);
 
-  if (userType === "سائق" && (driverAccount as any)?.isSuspended === true) {
-    return <SuspendedAccountOverlay />;
-  }
   if (!userId || !data) return null;
-  if (data.accountStatus === "suspended") return <SuspendedAccountOverlay />;
+  if (data.accountStatus === "suspended") {
+    const suspensionSource = (data as { suspensionSource?: "admin" | "driver_request" | null }).suspensionSource;
+    return suspensionSource === "driver_request"
+      ? <SuspendedAccountOverlay />
+      : <AdminSuspendedAccountOverlay />;
+  }
   if (data.accountStatus === "banned")    return <BannedAccountOverlay />;
   return null;
 }
