@@ -13,7 +13,7 @@
 
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, usersTable } from "@workspace/db";
+import { db, driverDetailsTable, usersTable } from "@workspace/db";
 
 const router: IRouter = Router();
 
@@ -39,7 +39,22 @@ router.get("/account/:userId/status", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json({ accountStatus: user.accountStatus, userType: user.userType });
+  // Driver suspensions are stored on driver_details for the driver-specific
+  // suspension workflow, while bans/suspensions from the admin account
+  // controls are stored on users. Expose one effective status so the global
+  // frontend gate can show the blocking overlay in either case.
+  let accountStatus = user.accountStatus;
+  if (user.userType === "سائق") {
+    const [driverDetails] = await db
+      .select({ isSuspended: driverDetailsTable.isSuspended })
+      .from(driverDetailsTable)
+      .where(eq(driverDetailsTable.driverId, callerId));
+    if (driverDetails?.isSuspended === true) {
+      accountStatus = "suspended";
+    }
+  }
+
+  res.json({ accountStatus, userType: user.userType });
 });
 
 export default router;

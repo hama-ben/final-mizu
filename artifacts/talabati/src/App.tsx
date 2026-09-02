@@ -13,7 +13,7 @@ import ProfilePage from "@/pages/profile";
 import WheelPage, { CouponsPage } from "@/pages/wheel";
 import AdminPage from "@/pages/admin";
 import { useAuth } from "@/hooks/use-auth";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { ThemeProvider } from "@/lib/theme";
 import { I18nProvider } from "@/lib/i18n";
@@ -32,7 +32,7 @@ import { getSocket } from "@/lib/socket-client";
 import { useSupportChatStore } from "@/stores/support-chat";
 import { AppealOverlay } from "@/components/appeal-overlay";
 import { customFetch } from "@workspace/api-client-react";
-import { ShieldAlert, HeadphonesIcon, XCircle, Loader2, Send } from "lucide-react";
+import { ShieldAlert, HeadphonesIcon, XCircle, Loader2 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global session-eviction listener
@@ -62,12 +62,10 @@ function SessionEvictionGuard() {
 export function SuspendedAccountOverlay() {
   const openSupport = useSupportChatStore((s) => s.open);
   const userId = useAuth((s) => s.userId);
-  const [liftModalOpen, setLiftModalOpen] = useState(false);
-  const [liftReason, setLiftReason] = useState("");
-  const [liftReasonText, setLiftReasonText] = useState("");
   const [liftLoading, setLiftLoading] = useState(false);
   const [liftError, setLiftError] = useState("");
   const [liftPending, setLiftPending] = useState(false);
+  const liftRequestInFlight = useRef(false);
 
   useEffect(() => {
     if (!userId) return;
@@ -81,43 +79,30 @@ export function SuspendedAccountOverlay() {
     return () => clearInterval(interval);
   }, [userId]);
 
-  const openLiftModal = () => {
-    setLiftReason("");
-    setLiftReasonText("");
-    setLiftError("");
-    setLiftModalOpen(true);
-  };
-
   const submitLiftRequest = async () => {
-    if (!liftReason) {
-      setLiftError("يرجى اختيار سبب التعليق");
-      return;
-    }
-    if (liftReason === "سبب آخر" && !liftReasonText.trim()) {
-      setLiftError("يرجى كتابة تفاصيل السبب");
+    if (liftPending || liftRequestInFlight.current) {
       return;
     }
 
     setLiftError("");
+    liftRequestInFlight.current = true;
     setLiftLoading(true);
     try {
       await customFetch("/api/driver/suspension-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestType: "lift",
-          reason: liftReason,
-          ...(liftReason === "سبب آخر"
-            ? { reasonText: liftReasonText.trim() }
-            : {}),
-        }),
+        body: JSON.stringify({ requestType: "lift" }),
       });
       setLiftPending(true);
-      setLiftModalOpen(false);
     } catch (err: unknown) {
       const apiError = err as { data?: { error?: string } } | null;
-      setLiftError(apiError?.data?.error ?? "تعذّر إرسال الطلب");
+      if (apiError?.data?.error === "يوجد طلب من نفس النوع قيد المراجعة") {
+        setLiftPending(true);
+      } else {
+        setLiftError(apiError?.data?.error ?? "تعذّر إرسال الطلب");
+      }
     } finally {
+      liftRequestInFlight.current = false;
       setLiftLoading(false);
     }
   };
@@ -132,102 +117,38 @@ export function SuspendedAccountOverlay() {
           <ShieldAlert className="w-8 h-8 text-amber-500" />
         </div>
         <h2 className="text-xl font-black text-slate-800 dark:text-white mb-3">
-          حسابك موقوف مؤقتاً
+          تم تعليق حسابك مؤقتا
         </h2>
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-2xl p-4 mb-6 text-right">
-          <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">
-            تم إيقاف حسابك مؤقتاً من قِبل الإدارة. هذا الإجراء مؤقت — تواصل مع
-            الدعم الفني لمعرفة السبب واستعادة وصولك.
+          <p className="text-slate-700 dark:text-slate-200 text-sm leading-loose font-bold">
+            الرجاء طلب الغاء تعليقك ادا كنت تريد العودة للعمل اظغط على زر طلب الغاء التعليق
           </p>
         </div>
-        <button
-          onClick={openSupport}
-          className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-primary to-cyan-500 text-white font-bold py-3 rounded-2xl shadow-lg hover:opacity-90 transition-all active:scale-[0.98]"
-        >
-          <HeadphonesIcon className="w-5 h-5" />
-          تواصل مع الدعم الفني
-        </button>
-        <button
-          onClick={openLiftModal}
-          disabled={liftPending}
-          className="mt-3 w-full flex items-center justify-center gap-2 border-2 border-primary text-primary dark:text-cyan-300 dark:border-cyan-400 font-bold py-3 rounded-2xl hover:bg-primary/10 transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
-          title="طلب إلغاء تعليق الحساب"
-          aria-label="طلب إلغاء تعليق الحساب"
-        >
-          <ShieldAlert className="w-5 h-5" />
-          {liftPending ? "طلب قيد المراجعة" : "طلب إلغاء تعليق الحساب"}
-        </button>
-      </div>
-
-      {liftModalOpen && (
-        <div
-          className="fixed inset-0 z-[220] flex items-end justify-center"
-          onClick={() => !liftLoading && setLiftModalOpen(false)}
-        >
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-          <div
-            className="relative bg-white dark:bg-slate-900 rounded-t-3xl p-6 w-full max-w-md shadow-2xl animate-in slide-in-from-bottom-4 duration-300"
-            dir="rtl"
-            onClick={(event) => event.stopPropagation()}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={submitLiftRequest}
+            disabled={liftLoading || liftPending}
+            className="w-full min-h-12 flex items-center justify-center gap-2 bg-gradient-to-r from-primary to-cyan-500 text-white font-bold px-3 py-3 rounded-2xl shadow-lg hover:opacity-90 transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed text-sm"
+            title="طلب إلغاء التعليق"
+            aria-label="طلب إلغاء التعليق"
           >
-            <div className="w-10 h-1 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-4" />
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="font-bold text-slate-800 dark:text-white text-lg">
-                طلب إلغاء تعليق الحساب
-              </h3>
-              <button
-                onClick={() => setLiftModalOpen(false)}
-                disabled={liftLoading}
-                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-50"
-                aria-label="إغلاق"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-4 mb-4">
-              اختر سبب طلب إلغاء تعليق حسابك
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {["إشغال الشاحنة", "سبب مرضي", "عطلة شخصية", "سبب آخر"].map((reason) => (
-                <button
-                  key={reason}
-                  onClick={() => {
-                    setLiftReason(reason);
-                    setLiftError("");
-                  }}
-                  className={`rounded-xl border px-3 py-3 text-sm font-medium transition-colors ${
-                    liftReason === reason
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-                  }`}
-                >
-                  {reason}
-                </button>
-              ))}
-            </div>
-            {liftReason === "سبب آخر" && (
-              <textarea
-                value={liftReasonText}
-                onChange={(event) => setLiftReasonText(event.target.value)}
-                rows={3}
-                className="mt-3 w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-sm text-slate-800 dark:text-white resize-none focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="اكتب تفاصيل السبب"
-                required
-              />
-            )}
-            {liftError && <p className="mt-3 text-xs text-red-500">{liftError}</p>}
-            <button
-              onClick={submitLiftRequest}
-              disabled={liftLoading || liftPending}
-              className="mt-5 w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary to-cyan-500 py-3 font-bold text-white shadow-lg disabled:opacity-60"
-            >
-              {liftLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              إرسال الطلب
-            </button>
-          </div>
+            {liftLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ShieldAlert className="w-5 h-5" />}
+            {liftPending ? "تم إرسال الطلب" : "طلب إلغاء التعليق"}
+          </button>
+          <button
+            onClick={openSupport}
+            className="w-full min-h-12 flex items-center justify-center gap-2 border-2 border-primary text-primary dark:text-cyan-300 dark:border-cyan-400 font-bold px-3 py-3 rounded-2xl hover:bg-primary/10 transition-all active:scale-[0.98] text-sm"
+          >
+            <HeadphonesIcon className="w-5 h-5" />
+            خدمة العملاء
+          </button>
         </div>
-      )}
+        {liftError && (
+          <p className="mt-3 text-xs text-red-500" role="alert">
+            {liftError}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

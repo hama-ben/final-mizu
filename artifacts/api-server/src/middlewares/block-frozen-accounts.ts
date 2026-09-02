@@ -16,6 +16,7 @@
  *   POST /appeal                   — submit a new appeal
  *   GET  /support/thread           — read support thread
  *   POST /support/thread/send      — send a support message
+ *   GET|POST /driver/suspension-requests — check/submit a lift request
  */
 
 import type { Request, Response, NextFunction } from "express";
@@ -104,6 +105,9 @@ function isFreezeAllowlisted(req: Request): boolean {
 
   // GET /support/thread + POST /support/thread/send — support chat
   if (p === "/support/thread" || p === "/support/thread/send") return true;
+
+  // A suspended driver must be able to request that the suspension is lifted.
+  if (p === "/driver/suspension-requests") return true;
 
   return false;
 }
