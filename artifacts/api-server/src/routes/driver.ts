@@ -90,13 +90,18 @@ router.post("/driver/suspension-requests", async (req, res): Promise<void> => {
 
   const rawReason = typeof body.reason === "string" ? body.reason.trim() : "";
   // A lift request is intentionally reason-free: the driver is only asking
-  // the admin to restore access. Keep a non-null audit value for the existing
-  // schema while preserving the reason requirement for self-suspension.
+  // the admin to restore access. The existing database constraint only allows
+  // the four suspension reason codes, so use the neutral "other" code and
+  // keep the request type as the real discriminator.
   const reason: string = requestType === "lift"
-    ? "lift_request"
+    ? "other"
     : (SUSPENSION_REASON_CODES[rawReason as keyof typeof SUSPENSION_REASON_CODES] ?? "");
   const rawReasonText = body.reasonText ?? body.reason_text ?? body.details;
-  const reasonText = typeof rawReasonText === "string" ? rawReasonText.trim() : "";
+  const reasonText = requestType === "lift"
+    ? "طلب إلغاء التعليق"
+    : typeof rawReasonText === "string"
+      ? rawReasonText.trim()
+      : "";
 
   if (requestType === "suspend" && !reason) {
     res.status(400).json({ error: "سبب طلب التعليق غير صالح" });
