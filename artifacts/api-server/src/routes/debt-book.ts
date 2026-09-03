@@ -171,7 +171,11 @@ router.post("/debt-book", async (req, res): Promise<void> => {
       status: account.status,
     });
   } catch (err: unknown) {
-    if ((err as { code?: string })?.code === "23505") {
+    const cause = (err as { cause?: unknown })?.cause ?? err;
+    const pgCode =
+      (cause as { code?: string })?.code ??
+      (err as { code?: string })?.code;
+    if (pgCode === "23505") {
       res.status(409).json({ error: "هذا المستهلك موجود بالفعل في دفتر الديون" });
       return;
     }
