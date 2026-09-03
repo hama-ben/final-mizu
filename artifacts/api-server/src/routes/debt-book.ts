@@ -39,6 +39,29 @@ router.get("/debt-book", async (req, res): Promise<void> => {
     .where(eq(debtAccountsTable.driverId, req.auth!.userId))
     .orderBy(desc(debtAccountsTable.updatedAt));
 
+  const entries =
+    accounts.length === 0
+      ? []
+      : await db
+          .select({
+            accountId: debtEntriesTable.accountId,
+            orderId: debtEntriesTable.orderId,
+            amount: debtEntriesTable.amount,
+            createdAt: debtEntriesTable.createdAt,
+            waterVolume: ordersTable.waterVolume,
+            barrelCount: ordersTable.barrelCount,
+          })
+          .from(debtEntriesTable)
+          .innerJoin(ordersTable, eq(ordersTable.id, debtEntriesTable.orderId))
+          .where(inArray(debtEntriesTable.accountId, accounts.map((account) => account.id)))
+          .orderBy(desc(debtEntriesTable.createdAt));
+  const entriesByAccount = new Map<string, typeof entries>();
+  for (const entry of entries) {
+    const accountEntries = entriesByAccount.get(entry.accountId) ?? [];
+    accountEntries.push(entry);
+    entriesByAccount.set(entry.accountId, accountEntries);
+  }
+
   res.json(
     accounts.map((account) => ({
       ...account,
@@ -46,6 +69,13 @@ router.get("/debt-book", async (req, res): Promise<void> => {
       balance: Number(account.balance),
       createdAt: account.createdAt.toISOString(),
       updatedAt: account.updatedAt.toISOString(),
+      purchases: (entriesByAccount.get(account.id) ?? []).map((entry) => ({
+        orderId: entry.orderId,
+        amount: Number(entry.amount),
+        waterVolume: entry.waterVolume,
+        barrelCount: entry.barrelCount,
+        createdAt: entry.createdAt.toISOString(),
+      })),
     })),
   );
 });

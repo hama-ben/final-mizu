@@ -78,6 +78,7 @@ export default function Dashboard() {
 
   // ── Favorite window expiry modal (Socket "favorite_window_expired") ─────────
   const [favoriteWindowModal, setFavoriteWindowModal] = useState<{ orderId: string } | null>(null);
+  const [hasDebt, setHasDebt] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
@@ -119,6 +120,23 @@ export default function Dashboard() {
       socket.off("order_expired", handleExpired);
     };
   }, [userId, queryClient]);
+
+  useEffect(() => {
+    if (!userId || userType !== "مستهلك") {
+      setHasDebt(false);
+      return;
+    }
+
+    const refreshDebtStatus = () => {
+      customFetch<{ balance: number }[]>("/api/debts")
+        .then((debts) => setHasDebt(debts.some((debt) => Number(debt.balance) > 0)))
+        .catch(() => setHasDebt(false));
+    };
+
+    refreshDebtStatus();
+    const interval = window.setInterval(refreshDebtStatus, 15_000);
+    return () => window.clearInterval(interval);
+  }, [userId, userType]);
 
   const handleRenewFavoriteWindow = async () => {
     if (!favoriteWindowModal) return;
@@ -164,21 +182,23 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <button
-        onClick={() => setLocation("/debt-book")}
-        className="w-full mb-4 rounded-3xl bg-gradient-to-r from-amber-500 to-orange-500 p-4 text-white shadow-lg shadow-amber-500/20 flex items-center justify-between text-right hover:opacity-95 transition-opacity"
-        dir="rtl"
-        data-testid="button-consumer-debts"
-      >
-        <span className="flex items-center gap-3">
-          <span className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center"><Wallet className="w-5 h-5" /></span>
-          <span>
-            <span className="block font-black">ديوني</span>
-            <span className="block text-xs text-white/80 mt-1">تابع مشترياتك بالدين</span>
+      {hasDebt && (
+        <button
+          onClick={() => setLocation("/debt-book")}
+          className="w-full mb-4 rounded-3xl bg-gradient-to-r from-amber-500 to-orange-500 p-4 text-white shadow-lg shadow-amber-500/20 flex items-center justify-between text-right hover:opacity-95 transition-opacity"
+          dir="rtl"
+          data-testid="button-consumer-debts"
+        >
+          <span className="flex items-center gap-3">
+            <span className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center"><Wallet className="w-5 h-5" /></span>
+            <span>
+              <span className="block font-black">ديوني</span>
+              <span className="block text-xs text-white/80 mt-1">تابع مشترياتك بالدين</span>
+            </span>
           </span>
-        </span>
-        <ArrowRight className="w-5 h-5 rotate-180" />
-      </button>
+          <ArrowRight className="w-5 h-5 rotate-180" />
+        </button>
+      )}
       {orderTimeoutNotice && (
         <div
           className={`mb-4 rounded-3xl border p-4 shadow-sm ${

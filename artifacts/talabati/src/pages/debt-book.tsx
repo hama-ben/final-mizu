@@ -14,6 +14,13 @@ type DebtAccount = {
   balance: number;
   status: string;
   updatedAt: string;
+  purchases: {
+    orderId: string;
+    amount: number;
+    waterVolume: string;
+    barrelCount: number;
+    createdAt: string;
+  }[];
 };
 
 type EligibleConsumer = {
@@ -92,6 +99,7 @@ function DriverDebtBook() {
   const [isLoading, setIsLoading] = useState(true);
   const [showConsumers, setShowConsumers] = useState(false);
   const [selectedConsumer, setSelectedConsumer] = useState<EligibleConsumer | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<DebtAccount | null>(null);
   const [ceiling, setCeiling] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -102,7 +110,15 @@ function DriverDebtBook() {
   };
 
   useEffect(() => {
-    loadAccounts().catch((err) => setError(errorMessage(err))).finally(() => setIsLoading(false));
+    const refreshAccounts = () => {
+      loadAccounts()
+        .catch((err) => setError(errorMessage(err)))
+        .finally(() => setIsLoading(false));
+    };
+
+    refreshAccounts();
+    const interval = window.setInterval(refreshAccounts, 15_000);
+    return () => window.clearInterval(interval);
   }, []);
 
   const openConsumerPicker = async () => {
@@ -155,20 +171,26 @@ function DriverDebtBook() {
 
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>
-      ) : accounts.length === 0 ? (
+      ) : accounts.filter((account) => account.balance > 0).length === 0 ? (
         <div className="glass-panel rounded-3xl p-8 text-center">
           <BookOpen className="w-12 h-12 text-primary/60 mx-auto mb-4" />
-          <h2 className="font-black text-lg text-slate-800 dark:text-white">دفتر الديون فارغ</h2>
+          <h2 className="font-black text-lg text-slate-800 dark:text-white">لا يوجد مستهلكون مدينون حاليًا</h2>
           <p className="text-sm text-slate-500 mt-2 leading-relaxed">
-            أضف مستهلكًا من الطلبات التي أوصلتها، ثم حدد له سقف الدين.
+            ستظهر هنا قائمة المستهلكين بعد تسجيل طلب بالدين.
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {accounts.map((account) => {
+          {accounts.filter((account) => account.balance > 0).map((account) => {
             const remaining = Math.max(account.debtCeiling - account.balance, 0);
             return (
-              <div key={account.id} className="glass-panel rounded-3xl p-5 border border-primary/15">
+              <button
+                key={account.id}
+                type="button"
+                onClick={() => setSelectedAccount(account)}
+                className="w-full text-right glass-panel rounded-3xl p-5 border border-primary/15 hover:border-primary/40 transition-colors"
+                data-testid={`button-debtor-${account.consumerId}`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h2 className="font-black text-lg text-slate-800 dark:text-white">{account.consumerName || "مستهلك"}</h2>
@@ -187,7 +209,8 @@ function DriverDebtBook() {
                   </div>
                 </div>
                 <p className="text-xs text-slate-500 mt-3">سقف الدين: {money(account.debtCeiling)} دج</p>
-              </div>
+                <p className="text-xs text-primary font-bold mt-3">اضغط لعرض المشتريات والطلبات بالدين</p>
+              </button>
             );
           })}
         </div>
@@ -256,6 +279,44 @@ function DriverDebtBook() {
           </div>
         </div>
       )}
+
+      {selectedAccount && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto" dir="rtl">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <h2 className="text-lg font-black text-slate-800 dark:text-white">
+                  {selectedAccount.consumerName || "المستهلك"}
+                </h2>
+                <p className="text-sm text-red-600 font-black mt-1">
+                  الدين الحالي: {money(selectedAccount.balance)} دج
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedAccount(null)}
+                className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center"
+                aria-label="إغلاق تفاصيل المشتريات"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <p className="text-sm font-black text-slate-700 dark:text-slate-200 mb-3">الطلبات والمشتريات بالدين</p>
+              <div className="space-y-2">
+                {selectedAccount.purchases.map((purchase) => (
+                  <div key={purchase.orderId} className="rounded-2xl bg-slate-50 dark:bg-slate-800/70 px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs text-slate-500">{purchase.waterVolume} · {purchase.barrelCount} براميل</span>
+                      <span className="text-sm font-black text-red-600">{money(purchase.amount)} دج</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">رقم الطلب: {purchase.orderId}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -266,25 +327,34 @@ function ConsumerDebts() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    customFetch<ConsumerDebt[]>("/api/debts")
-      .then(setDebts)
-      .catch((err) => setError(errorMessage(err)))
-      .finally(() => setIsLoading(false));
+    const refreshDebts = () => {
+      customFetch<ConsumerDebt[]>("/api/debts")
+        .then(setDebts)
+        .catch((err) => setError(errorMessage(err)))
+        .finally(() => setIsLoading(false));
+    };
+
+    refreshDebts();
+    const interval = window.setInterval(refreshDebts, 15_000);
+    return () => window.clearInterval(interval);
   }, []);
 
-  const total = debts.reduce((sum, debt) => sum + debt.balance, 0);
+  const activeDebts = debts.filter((debt) => debt.balance > 0);
+  const total = activeDebts.reduce((sum, debt) => sum + debt.balance, 0);
 
   return (
     <div className="max-w-md mx-auto p-4 pb-10" dir="rtl">
       <PageHeader title="ديوني" subtitle="المبالغ المستحقة لكل سائق" />
       {error && <p className="mb-4 rounded-2xl bg-red-50 text-red-600 p-3 text-sm font-bold" role="alert">{error}</p>}
-      <div className="rounded-3xl bg-gradient-to-br from-primary to-cyan-500 text-white p-5 mb-5 shadow-lg shadow-primary/20">
-        <p className="text-sm text-white/80">إجمالي الديون</p>
-        <p className="text-3xl font-black mt-1">{money(total)} <span className="text-base">دج</span></p>
-      </div>
+      {activeDebts.length > 0 && (
+        <div className="rounded-3xl bg-gradient-to-br from-primary to-cyan-500 text-white p-5 mb-5 shadow-lg shadow-primary/20">
+          <p className="text-sm text-white/80">إجمالي الديون</p>
+          <p className="text-3xl font-black mt-1">{money(total)} <span className="text-base">دج</span></p>
+        </div>
+      )}
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>
-      ) : debts.length === 0 ? (
+      ) : activeDebts.length === 0 ? (
         <div className="glass-panel rounded-3xl p-8 text-center">
           <Wallet className="w-12 h-12 text-emerald-500/70 mx-auto mb-4" />
           <h2 className="font-black text-lg text-slate-800 dark:text-white">لا توجد ديون</h2>
@@ -292,7 +362,7 @@ function ConsumerDebts() {
         </div>
       ) : (
         <div className="space-y-3">
-          {debts.map((debt) => (
+          {activeDebts.map((debt) => (
             <div key={debt.id} className="glass-panel rounded-3xl p-5 border border-red-200/60 dark:border-red-900/40">
               <div className="flex items-start justify-between">
                 <div>
