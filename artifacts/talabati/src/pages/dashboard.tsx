@@ -6,7 +6,7 @@ import { useTranslation } from "@/lib/i18n";
 import { useCreateOrder, useGetUserOrders, getGetUserOrdersQueryKey, customFetch } from "@workspace/api-client-react";
 import { useCancelOrder } from "@/hooks/use-cancel-order";
 import { useQueryClient } from "@tanstack/react-query";
-import { Droplet, ShoppingBag, ListOrdered, CircleCheck as CheckCircle2, Truck, Clock, ArrowRight, Loader as Loader2, MapPin, Bell, X, User, Phone, Circle as XCircle, Star, Bookmark, BookmarkCheck, Trash2, Headphones as HeadphonesIcon, Heart, Search, RefreshCw, Share2, Copy, Check, Users, Trophy, AlertTriangle } from "lucide-react";
+import { Droplet, ShoppingBag, ListOrdered, CircleCheck as CheckCircle2, Truck, Clock, ArrowRight, Loader as Loader2, MapPin, Bell, X, User, Phone, Circle as XCircle, Star, Bookmark, BookmarkCheck, Trash2, Headphones as HeadphonesIcon, Heart, Search, RefreshCw, Share2, Copy, Check, Users, Trophy, AlertTriangle, Wallet } from "lucide-react";
 import { getSocket } from "@/lib/socket-client";
 import { useRealtimeOrderStatus } from "@/hooks/use-realtime-order-status";
 import { format } from "date-fns";
@@ -164,6 +164,21 @@ export default function Dashboard() {
 
   return (
     <Layout>
+      <button
+        onClick={() => setLocation("/debt-book")}
+        className="w-full mb-4 rounded-3xl bg-gradient-to-r from-amber-500 to-orange-500 p-4 text-white shadow-lg shadow-amber-500/20 flex items-center justify-between text-right hover:opacity-95 transition-opacity"
+        dir="rtl"
+        data-testid="button-consumer-debts"
+      >
+        <span className="flex items-center gap-3">
+          <span className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center"><Wallet className="w-5 h-5" /></span>
+          <span>
+            <span className="block font-black">ديوني</span>
+            <span className="block text-xs text-white/80 mt-1">تابع مشترياتك بالدين</span>
+          </span>
+        </span>
+        <ArrowRight className="w-5 h-5 rotate-180" />
+      </button>
       {orderTimeoutNotice && (
         <div
           className={`mb-4 rounded-3xl border p-4 shadow-sm ${

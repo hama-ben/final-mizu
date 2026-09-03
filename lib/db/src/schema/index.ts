@@ -172,6 +172,7 @@ export const ordersTable = pgTable("orders", {
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   acceptedAt: timestamp("accepted_at"),
   deliveredAt: timestamp("delivered_at"),
+  paymentMethod: text("payment_method").notNull().default("cash"),
   orderType: text("order_type").notNull().default("normal"),
   staleNoticeSentAt: timestamp("stale_notice_sent_at"),
   // Favorite-driver exclusivity: set when a consumer has a favourite driver who is online.
@@ -298,6 +299,47 @@ export const favoriteDriversTable = pgTable(
   (table) => [
     unique("favorite_drivers_user_driver_unique").on(table.userId, table.driverId),
   ]
+);
+
+/**
+ * debt_accounts — one private credit account per driver/consumer pair.
+ * A driver can only create an account after delivering an order to that
+ * consumer. Creating an account also adds the driver to the consumer's
+ * favourites in the API transaction.
+ */
+export const debtAccountsTable = pgTable(
+  "debt_accounts",
+  {
+    id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+    driverId: text("driver_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+    consumerId: text("consumer_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+    debtCeiling: numeric("debt_ceiling").notNull(),
+    balance: numeric("balance").notNull().default("0"),
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    unique("debt_accounts_driver_consumer_unique").on(table.driverId, table.consumerId),
+  ],
+);
+
+/**
+ * debt_entries — immutable debit records tied to a delivered order.
+ * orderId is unique so retrying the completion request can never double-charge.
+ */
+export const debtEntriesTable = pgTable(
+  "debt_entries",
+  {
+    id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+    accountId: text("account_id").notNull().references(() => debtAccountsTable.id, { onDelete: "cascade" }),
+    orderId: text("order_id").notNull().references(() => ordersTable.id, { onDelete: "cascade" }),
+    amount: numeric("amount").notNull(),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    unique("debt_entries_order_unique").on(table.orderId),
+  ],
 );
 
 /**

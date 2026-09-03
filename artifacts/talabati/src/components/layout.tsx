@@ -17,6 +17,7 @@ import {
   Send,
   Dices,
   Ticket,
+  BookOpen,
 } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
 import { useTheme } from "@/lib/theme";
@@ -385,6 +386,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 >
                   <UserCircle className="w-4 h-4 text-slate-500" />
                   <span>الملف الشخصي</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setLocation("/debt-book");
+                  }}
+                  className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-right text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  title={isDriver ? "دفتر الديون" : "ديوني"}
+                  data-testid="button-debt-book"
+                  role="menuitem"
+                >
+                  <BookOpen className="w-4 h-4 text-amber-500" />
+                  <span>{isDriver ? "دفتر الديون" : "ديوني"}</span>
                 </button>
 
                 <button

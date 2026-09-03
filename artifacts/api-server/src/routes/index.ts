@@ -34,6 +34,7 @@ import favoriteDriversRouter                                 from "./favorite-dr
 import referralsRouter                                       from "./referrals";
 import wheelRouter                                           from "./wheel";
 import giftsRouter                                           from "./gifts";
+import debtBookRouter                                        from "./debt-book";
 import { getNoDriverContestStatus }                           from "../lib/no-driver-contest";
 
 const router: IRouter = Router();
@@ -69,6 +70,7 @@ router.use(supportProtectedRouter); // GET /support/thread  POST /support/thread
 router.use(referralsRouter);        // GET /referrals/me
 router.use(wheelRouter);             // GET|POST /wheel-spins, GET /coupons
 router.use(giftsRouter);             // GET /gifts/drivers, POST /gifts/*
+router.use(debtBookRouter);          // Driver debt books + consumer debts
 
 router.get("/no-driver-contest", async (req, res): Promise<void> => {
   try {

@@ -17,6 +17,7 @@ import {
   getGetDriverOrdersQueryKey,
   useGetDriverAccount,
   getGetDriverAccountQueryKey,
+  customFetch,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRealtimeOrders } from "@/hooks/use-realtime-orders";
@@ -639,17 +640,47 @@ function MyActiveDeliveries({ driverId }: { driverId: string }) {
     query: { queryKey: getGetDriverOrdersQueryKey(driverId), refetchInterval: 8000 }
   });
   const updateStatusMutation = useUpdateOrderStatus();
+  const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
+  const [paymentPending, setPaymentPending] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+
+  const completeWithPayment = async (orderId: string, paymentMethod: "cash" | "debt") => {
+    setPaymentPending(true);
+    setPaymentError("");
+    try {
+      await customFetch(`/api/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "تم التوصيل", paymentMethod }),
+      });
+      setPaymentOrderId(null);
+      queryClient.invalidateQueries({ queryKey: getGetDriverOrdersQueryKey(driverId) });
+      queryClient.invalidateQueries({ queryKey: getGetActiveOrdersQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetOrdersSummaryQueryKey() });
+    } catch (err: unknown) {
+      const apiError = err as { data?: { error?: string } } | null;
+      setPaymentError(apiError?.data?.error ?? "تعذّر تأكيد التسليم");
+    } finally {
+      setPaymentPending(false);
+    }
+  };
 
   if (isLoading || !orders || orders.length === 0) return null;
 
   return (
-    <div className="space-y-4">
-      <h2 className="font-bold text-lg text-primary px-2 flex items-center gap-2">
-        <Truck className="w-5 h-5" />توصيلاتي النشطة
-      </h2>
-      {orders.map(order => (
-        <div key={order.id} className="glass-panel p-5 rounded-3xl border-2 border-primary/30 relative overflow-hidden" data-testid={`my-delivery-${order.id}`}>
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-primary" />
+    <>
+      <div className="space-y-4">
+        <h2 className="font-bold text-lg text-primary px-2 flex items-center gap-2">
+          <Truck className="w-5 h-5" />توصيلاتي النشطة
+        </h2>
+        {orders.map(order => {
+          const debtInfo = order as typeof order & {
+            hasDebtAccount?: boolean;
+            isFavoriteConsumer?: boolean;
+          };
+          return (
+          <div key={order.id} className="glass-panel p-5 rounded-3xl border-2 border-primary/30 relative overflow-hidden" data-testid={`my-delivery-${order.id}`}>
+            <div className="absolute top-0 right-0 w-1.5 h-full bg-primary" />
 
           <div className="flex justify-between items-start mb-3 pb-3 border-b border-slate-100 dark:border-slate-800">
             <div>
@@ -709,16 +740,23 @@ function MyActiveDeliveries({ driverId }: { driverId: string }) {
             )}
             {(order.status === "وصل السائق" || order.status === "قيد التوصيل") && (
               <button
-                onClick={() => updateStatusMutation.mutate(
-                  { orderId: order.id, data: { status: "تم التوصيل" } },
-                  {
-                    onSuccess: () => {
-                      queryClient.invalidateQueries({ queryKey: getGetDriverOrdersQueryKey(driverId) });
-                      queryClient.invalidateQueries({ queryKey: getGetActiveOrdersQueryKey() });
-                      queryClient.invalidateQueries({ queryKey: getGetOrdersSummaryQueryKey() });
-                    }
+                onClick={() => {
+                  if (debtInfo.hasDebtAccount && debtInfo.isFavoriteConsumer) {
+                    setPaymentError("");
+                    setPaymentOrderId(order.id);
+                  } else {
+                    updateStatusMutation.mutate(
+                      { orderId: order.id, data: { status: "تم التوصيل" } },
+                      {
+                        onSuccess: () => {
+                          queryClient.invalidateQueries({ queryKey: getGetDriverOrdersQueryKey(driverId) });
+                          queryClient.invalidateQueries({ queryKey: getGetActiveOrdersQueryKey() });
+                          queryClient.invalidateQueries({ queryKey: getGetOrdersSummaryQueryKey() });
+                        }
+                      }
+                    );
                   }
-                )}
+                }}
                 disabled={updateStatusMutation.isPending}
                 className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-bold bg-emerald-500 hover:bg-emerald-600 text-white shadow-md shadow-emerald-500/20 transition-all active:scale-[0.98]"
                 data-testid={`button-complete-${order.id}`}
@@ -727,9 +765,44 @@ function MyActiveDeliveries({ driverId }: { driverId: string }) {
               </button>
             )}
           </div>
+          </div>
+          );
+        })}
+      </div>
+
+      {paymentOrderId && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 w-full max-w-sm shadow-2xl" dir="rtl">
+            <h2 className="text-xl font-black text-slate-800 dark:text-white">طريقة الدفع</h2>
+            <p className="text-sm text-slate-500 mt-2 mb-5">هل دفع المستهلك نقدًا أم أضاف الطلب إلى الدين؟</p>
+            {paymentError && <p className="mb-4 rounded-2xl bg-red-50 text-red-600 p-3 text-sm font-bold" role="alert">{paymentError}</p>}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => completeWithPayment(paymentOrderId, "cash")}
+                disabled={paymentPending}
+                className="py-4 rounded-2xl border-2 border-emerald-500 text-emerald-600 font-black hover:bg-emerald-50 disabled:opacity-50"
+              >
+                دفع نقدا
+              </button>
+              <button
+                onClick={() => completeWithPayment(paymentOrderId, "debt")}
+                disabled={paymentPending}
+                className="py-4 rounded-2xl bg-amber-500 text-white font-black hover:bg-amber-600 disabled:opacity-50"
+              >
+                دفع بالدين
+              </button>
+            </div>
+            <button
+              onClick={() => setPaymentOrderId(null)}
+              disabled={paymentPending}
+              className="w-full mt-3 py-3 rounded-2xl text-slate-500 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+            >
+              إلغاء
+            </button>
+          </div>
         </div>
-      ))}
-    </div>
+      )}
+    </>
   );
 }
 

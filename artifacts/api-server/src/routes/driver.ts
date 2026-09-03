@@ -10,6 +10,8 @@ import {
   driverDetailsTable,
   driverAppealsTable,
   driverSuspensionRequestsTable,
+  debtAccountsTable,
+  favoriteDriversTable,
 } from "@workspace/db";
 import { UpdateDriverStatusBody } from "@workspace/api-zod";
 import multer from "multer";
@@ -509,6 +511,17 @@ router.get("/driver/:driverId/orders", async (req, res): Promise<void> => {
       longitude: ordersTable.longitude,
       status: ordersTable.status,
       createdAt: ordersTable.createdAt,
+      hasDebtAccount: sql<boolean>`EXISTS (
+        SELECT 1 FROM ${debtAccountsTable}
+        WHERE ${debtAccountsTable.driverId} = ${driverId}
+          AND ${debtAccountsTable.consumerId} = ${ordersTable.userId}
+          AND ${debtAccountsTable.status} = 'active'
+      )`,
+      isFavoriteConsumer: sql<boolean>`EXISTS (
+        SELECT 1 FROM ${favoriteDriversTable}
+        WHERE ${favoriteDriversTable.driverId} = ${driverId}
+          AND ${favoriteDriversTable.userId} = ${ordersTable.userId}
+      )`,
     })
     .from(ordersTable)
     .leftJoin(usersTable, eq(ordersTable.userId, usersTable.id))
@@ -530,6 +543,8 @@ router.get("/driver/:driverId/orders", async (req, res): Promise<void> => {
       latitude: o.latitude !== null ? Number(o.latitude) : null,
       longitude: o.longitude !== null ? Number(o.longitude) : null,
       status: o.status,
+       hasDebtAccount: Boolean(o.hasDebtAccount),
+       isFavoriteConsumer: Boolean(o.isFavoriteConsumer),
       createdAt: o.createdAt.toISOString(),
     }))
   );

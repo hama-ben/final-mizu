@@ -1,6 +1,15 @@
 import { Router, type IRouter } from "express";
 import { eq, asc, desc, count, sql, and, gte, lt, lte, or, isNull, isNotNull } from "drizzle-orm";
-import { db, ordersTable, usersTable, driverDetailsTable, driverStatusTable, favoriteDriversTable } from "@workspace/db";
+import {
+  db,
+  debtAccountsTable,
+  debtEntriesTable,
+  ordersTable,
+  usersTable,
+  driverDetailsTable,
+  driverStatusTable,
+  favoriteDriversTable,
+} from "@workspace/db";
 import {
   CreateOrderBody,
   GetUserOrdersParams,
@@ -60,6 +69,9 @@ function mapOrder(o: {
   status: string;
   createdAt: Date;
   isStale?: boolean;
+  hasDebtAccount?: boolean;
+  isFavoriteConsumer?: boolean;
+  paymentMethod?: string;
 }) {
   return {
     id: o.id,
@@ -75,6 +87,9 @@ function mapOrder(o: {
     latitude: o.latitude !== null ? Number(o.latitude) : null,
     longitude: o.longitude !== null ? Number(o.longitude) : null,
     status: o.status,
+    ...(o.paymentMethod === undefined ? {} : { paymentMethod: o.paymentMethod }),
+    ...(o.hasDebtAccount === undefined ? {} : { hasDebtAccount: o.hasDebtAccount }),
+    ...(o.isFavoriteConsumer === undefined ? {} : { isFavoriteConsumer: o.isFavoriteConsumer }),
     createdAt: o.createdAt.toISOString(),
     ...(o.isStale === undefined ? {} : { isStale: o.isStale }),
   };
@@ -640,7 +655,7 @@ router.patch("/orders/:orderId/status", async (req, res): Promise<void> => {
     return;
   }
 
-  const body = UpdateOrderStatusBody.safeParse(req.body);
+  const body = UpdateOrderStatusBody.safeParse({ status: req.body?.status });
   if (!body.success) {
     res.status(400).json({ error: body.data });
     return;
@@ -650,6 +665,16 @@ router.patch("/orders/:orderId/status", async (req, res): Promise<void> => {
   // status — never trust that the caller is who they claim just because
   // they're authenticated. A consumer, or an unrelated driver, must not be
   // able to mark someone else's order as delivered.
+  const paymentMethod = req.body?.paymentMethod;
+  if (paymentMethod !== undefined && paymentMethod !== "cash" && paymentMethod !== "debt") {
+    res.status(400).json({ error: "طريقة الدفع غير صالحة" });
+    return;
+  }
+  if (paymentMethod === "debt" && body.data.status !== "تم التوصيل") {
+    res.status(400).json({ error: "الدفع بالدين متاح عند إتمام التوصيل فقط" });
+    return;
+  }
+
   const [existingOrder] = await db
     .select({ driverId: ordersTable.driverId })
     .from(ordersTable)
@@ -664,14 +689,116 @@ router.patch("/orders/:orderId/status", async (req, res): Promise<void> => {
     return;
   }
 
-  const [order] = await db
-    .update(ordersTable)
-    .set({
-      status: body.data.status,
-      ...(body.data.status === "تم التوصيل" ? { deliveredAt: new Date() } : {}),
+  const [orderDetails] = await db
+    .select({
+      id: ordersTable.id,
+      userId: ordersTable.userId,
+      driverId: ordersTable.driverId,
+      totalPrice: ordersTable.totalPrice,
+      status: ordersTable.status,
     })
-    .where(eq(ordersTable.id, params.data.orderId))
-    .returning();
+    .from(ordersTable)
+    .where(eq(ordersTable.id, params.data.orderId));
+
+  if (!orderDetails) {
+    res.status(404).json({ error: "الطلب غير موجود" });
+    return;
+  }
+
+  let order;
+  if (body.data.status === "تم التوصيل" && paymentMethod === "debt") {
+    const [favorite] = await db
+      .select({ driverId: favoriteDriversTable.driverId })
+      .from(favoriteDriversTable)
+      .where(
+        and(
+          eq(favoriteDriversTable.userId, orderDetails.userId),
+          eq(favoriteDriversTable.driverId, req.auth!.userId),
+        ),
+      )
+      .limit(1);
+    if (!favorite) {
+      res.status(403).json({ error: "الدفع بالدين متاح للسائق المفضل فقط" });
+      return;
+    }
+
+    const [account] = await db
+      .select({
+        id: debtAccountsTable.id,
+        debtCeiling: debtAccountsTable.debtCeiling,
+      })
+      .from(debtAccountsTable)
+      .where(
+        and(
+          eq(debtAccountsTable.driverId, req.auth!.userId),
+          eq(debtAccountsTable.consumerId, orderDetails.userId),
+          eq(debtAccountsTable.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (!account) {
+      res.status(403).json({ error: "أضف المستهلك إلى دفتر الديون أولاً" });
+      return;
+    }
+
+    try {
+      order = await db.transaction(async (tx) => {
+        const [updatedAccount] = await tx
+          .update(debtAccountsTable)
+          .set({
+            balance: sql`${debtAccountsTable.balance} + ${orderDetails.totalPrice}`,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(debtAccountsTable.id, account.id),
+              sql`${debtAccountsTable.balance} + ${orderDetails.totalPrice} <= ${debtAccountsTable.debtCeiling}`,
+            ),
+          )
+          .returning({ id: debtAccountsTable.id });
+
+        if (!updatedAccount) {
+          const error = new Error("DEBT_CEILING_EXCEEDED");
+          (error as Error & { code?: string }).code = "DEBT_CEILING_EXCEEDED";
+          throw error;
+        }
+
+        await tx.insert(debtEntriesTable).values({
+          accountId: account.id,
+          orderId: orderDetails.id,
+          amount: orderDetails.totalPrice,
+        });
+
+        const [updatedOrder] = await tx
+          .update(ordersTable)
+          .set({ status: body.data.status, paymentMethod: "debt", deliveredAt: new Date() })
+          .where(eq(ordersTable.id, params.data.orderId))
+          .returning();
+        return updatedOrder;
+      });
+    } catch (err: unknown) {
+      if ((err as { code?: string })?.code === "DEBT_CEILING_EXCEEDED") {
+        res.status(409).json({ error: "تجاوز الطلب سقف الدين المحدد لهذا المستهلك" });
+        return;
+      }
+      if ((err as { code?: string })?.code === "23505") {
+        res.status(409).json({ error: "تم تسجيل هذا الطلب في دفتر الديون مسبقاً" });
+        return;
+      }
+      throw err;
+    }
+  } else {
+    [order] = await db
+      .update(ordersTable)
+      .set({
+        status: body.data.status,
+        ...(body.data.status === "تم التوصيل"
+          ? { deliveredAt: new Date(), paymentMethod: "cash" }
+          : {}),
+      })
+      .where(eq(ordersTable.id, params.data.orderId))
+      .returning();
+  }
 
   if (!order) {
     res.status(404).json({ error: "الطلب غير موجود" });
